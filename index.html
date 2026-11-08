@@ -178,8 +178,8 @@ body.debug #ribbon{outline:1px solid #ffaa00 !important;background:rgba(255,170,
 
 <div id="tools">
   <div class="row">
-    <label class="up" for="fileInput">📂 ЗАГРУЗИТЬ .BIN / .EMX</label>
-    <input type="file" id="fileInput" accept=".bin,.emx,.syx,.all,.esx,application/octet-stream" style="display:none">
+    <label class="up" for="fileInput" title="Дамп карты .BIN/.EMX или ZIP с WAV-сэмплами (Korg Electribe EMX-1.zip из Internet Archive)">📂 .BIN / .EMX / .ZIP</label>
+    <input type="file" id="fileInput" accept=".bin,.emx,.syx,.all,.esx,.zip,application/zip,application/octet-stream" style="display:none">
     <select id="patternSel" aria-label="Pattern"></select>
     <div class="hint"><b>9984 B</b> × 128 блоков · <b>BPM</b> +0x00 · <b>KICK</b> +0x40 · <b>CUTOFF</b> +0x11A</div>
     <div class="badge live" id="fileBadge">LIVE / BUILT-IN A.14</div>
@@ -255,7 +255,7 @@ const PENTA = ['C2','D#2','F2','G2','A#2','C3','D#3','F3'];
 const KEYS16 = ['C2','C#2','D2','D#2','E2','F2','F#2','G2','G#2','A2','A#2','B2','C3','C#3','D3','D#3'];
 const MENUS = {
   PATTERN:['PATTERN SELECT','LENGTH 16/16','GROOVE OFF','SCALE IONIAN','ROLL 1/16','LAST STEP 16'],
-  'PART EDIT':['OSC EDIT','FILTER EDIT','EG EDIT','MOD SETTING','PART LEVEL','PART PAN'],
+  'PART EDIT':['OSC EDIT','FILTER EDIT','EG EDIT','MOD SETTING','PART LEVEL','PART PAN','SAMPLE'],
   'STEP EDIT':['STEP 01/16','VELOCITY 100','GATE TIME 50%','MOTION OFF','SHIFT TIMING','TRIG HOLD OFF'],
   SONG:['SONG 01 NAME','STEP 001','REPEAT OFF','TRACK 01','PATTERN A.14','END STEP 064'],
   GLOBAL:['AUDIO OUT','LCD CONTRAST 8','KNOB MODE NORMAL','POWER SAVE OFF','MIDI CLOCK AUTO','INIT PATTERN'],
@@ -269,7 +269,8 @@ const state = {
   bassNote:0, keyMode:false, menu:null, menuIdx:0, muteMode:false, soloMode:false, shift:false,
   muted:new Set(), solo:null, buf:null, fileName:'', tempoLock:false,
   cutoff:0.62, reso:0.25, ftype:'lowpass',
-  steps:emptySteps()
+  steps:emptySteps(),
+  sampleIdx:{}, sampleSrc:{}, hasZipSamples:false, zipApplied:false
 };
 
 const KNOBS = {
@@ -322,6 +323,329 @@ const toast = (msg)=>{
   el.textContent = msg; el.classList.add('show');
   clearTimeout(toast._t); toast._t = setTimeout(()=>el.classList.remove('show'), 2200);
 };
+
+/* ------------------------------------------------------------------
+   ZIP-импорт: сэмплы Korg Electribe EMX-1 из коллекции Internet Archive
+   drum-machines-collection (Korg Electribe EMX-1.zip, 207 wav).
+   Распаковка — нативная DecompressionStream, иначе свой inflate.
+------------------------------------------------------------------- */
+// Compact DEFLATE (RFC 1951) inflate — fallback if DecompressionStream is missing.
+function inflateRaw(src, pos, outLen){
+  var out = new Uint8Array(outLen), op = 0, bp = pos, bitbuf = 0, bitcnt = 0;
+  var LBASE = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258];
+  var LEXT  = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0];
+  var DBASE = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577];
+  var DEXT  = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13];
+  var CLORD = [16,17,18,0,8,7,9,6,10,5,11,4,12,3,13,2,14,1,15];
+
+  function bits(n){
+    while (bitcnt < n){ bitbuf |= src[bp++] << bitcnt; bitcnt += 8; }
+    var v = bitbuf & ((1 << n) - 1);
+    bitbuf >>>= n; bitcnt -= n;
+    return v;
+  }
+  function buildTable(lengths, n){
+    var count = new Uint16Array(16), offs = new Uint16Array(16), i;
+    for (i = 0; i < n; i++) count[lengths[i]]++;
+    count[0] = 0;
+    for (i = 1; i < 16; i++) offs[i] = offs[i - 1] + count[i - 1];
+    var sym = new Uint16Array(n);
+    for (i = 0; i < n; i++) if (lengths[i]) sym[offs[lengths[i]]++] = i;
+    return { count: count, symbol: sym };
+  }
+  function decode(h){
+    var code = 0, first = 0, index = 0, len, count;
+    for (len = 1; len <= 15; len++){
+      code |= bits(1);
+      count = h.count[len];
+      if (code - first < count) return h.symbol[index + (code - first)];
+      index += count; first = (first + count) << 1; code <<= 1;
+    }
+    return -1;
+  }
+  var fixedLen = null, fixedDist = null;
+  function fixed(){
+    if (fixedLen) return;
+    var l = new Uint8Array(288), i;
+    for (i = 0; i < 144; i++) l[i] = 8;
+    for (; i < 256; i++) l[i] = 9;
+    for (; i < 280; i++) l[i] = 7;
+    for (; i < 288; i++) l[i] = 8;
+    fixedLen = buildTable(l, 288);
+    var d = new Uint8Array(30);
+    for (i = 0; i < 30; i++) d[i] = 5;
+    fixedDist = buildTable(d, 30);
+  }
+  var lenT, distT;
+  function dynamic(){
+    var hlit = bits(5) + 257, hdist = bits(5) + 1, hclen = bits(4) + 4, i;
+    var cl = new Uint8Array(19);
+    for (i = 0; i < hclen; i++) cl[CLORD[i]] = bits(3);
+    var clT = buildTable(cl, 19);
+    var lens = new Uint8Array(hlit + hdist), n = 0;
+    while (n < lens.length){
+      var s = decode(clT);
+      if (s < 16) lens[n++] = s;
+      else if (s === 16){ var r = 3 + bits(2), v = lens[n - 1]; while (r-- && n < lens.length) lens[n++] = v; }
+      else if (s === 17){ var r2 = 3 + bits(3); while (r2-- && n < lens.length) lens[n++] = 0; }
+      else { var r3 = 11 + bits(7); while (r3-- && n < lens.length) lens[n++] = 0; }
+    }
+    lenT = buildTable(lens.subarray(0, hlit), hlit);
+    distT = buildTable(lens.subarray(hlit), hdist);
+  }
+
+  for (;;){
+    var last = bits(1), type = bits(2);
+    if (type === 0){
+      bitbuf = 0; bitcnt = 0;
+      var len = src[bp] | (src[bp + 1] << 8); bp += 4;
+      out.set(src.subarray(bp, bp + len), op); bp += len; op += len;
+    } else {
+      if (type === 1){ fixed(); lenT = fixedLen; distT = fixedDist; }
+      else if (type === 2) dynamic();
+      else throw new Error('bad block type');
+      for (;;){
+        var sym = decode(lenT);
+        if (sym === 256) break;
+        if (sym < 256) out[op++] = sym;
+        else {
+          sym -= 257;
+          if (sym >= 29) throw new Error('bad length');
+          var L = LBASE[sym] + bits(LEXT[sym]);
+          var ds = decode(distT);
+          if (ds < 0) throw new Error('bad distance');
+          var D = DBASE[ds] + bits(DEXT[ds]);
+          var from = op - D;
+          while (L--){ out[op++] = out[from++]; }
+        }
+      }
+    }
+    if (last) break;
+  }
+  return op === outLen ? out : out.subarray(0, op);
+}
+
+function zipIndex(u8){
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let eocd = -1;
+  const from = Math.max(0, u8.length - 66000);
+  for (let i = u8.length - 22; i >= from; i--){ if (dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; } }
+  if (eocd < 0) throw new Error('Это не ZIP-архив');
+  const n = dv.getUint16(eocd + 10, true);
+  let p = dv.getUint32(eocd + 16, true);
+  const out = [];
+  for (let i = 0; i < n; i++){
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const flags = dv.getUint16(p + 8, true);
+    const method = dv.getUint16(p + 10, true);
+    const csize = dv.getUint32(p + 20, true);
+    const size = dv.getUint32(p + 24, true);
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true);
+    const lho = dv.getUint32(p + 42, true);
+    const attr = dv.getUint32(p + 38, true);
+    let name = '';
+    for (let k = 0; k < nl; k++) name += String.fromCharCode(u8[p + 46 + k]);
+    p += 46 + nl + el + cl;
+    const dir = (attr & 0x10) !== 0;
+    if (dir || !size || /\/$/.test(name)) continue;
+    const lnl = dv.getUint16(lho + 26, true), lel = dv.getUint16(lho + 28, true);
+    out.push({ name: name, method: method, csize: csize, size: size, off: lho + 30 + lnl + lel, flags: flags });
+  }
+  return out;
+}
+
+function toArrayBuffer(u8){
+  if (u8.byteOffset === 0 && u8.length === u8.buffer.byteLength) return u8.buffer;
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+}
+
+async function zipEntryBytes(u8, e){
+  if (e.method === 0) return u8.subarray(e.off, e.off + e.csize);
+  if (typeof DecompressionStream === 'function'){
+    try {
+      const ds = new DecompressionStream('deflate-raw');
+      const ab = await new Response(new Blob([u8.subarray(e.off, e.off + e.csize)]).stream().pipeThrough(ds)).arrayBuffer();
+      if (ab.byteLength) return new Uint8Array(ab);
+    } catch(_){ /* Safari < 16.4 — идём своим inflate */ }
+  }
+  return inflateRaw(u8, e.off, e.size);
+}
+
+/* Эвристика имён: как wav из архива раскладываются по 9 дорожкам.
+   В EMX-1 207 PCM-сэмплов, в открытых выгрузках они идут префиксами
+   BD / SD / HH / CH / OH / CP / RS / CB / SH / LT / MT / HT / PC
+   (иногда с номерами: BD001.wav, Korg-EMX1-SD-01.wav). */
+const ZIP_LONG = [
+  ['kick',   ['kick','kik','bassdrum']],
+  ['snare',  ['snare','snaredrum']],
+  ['hat',    ['hihat','openhat','closedhat','hat']],
+  ['clap',   ['clap','handclap']],
+  ['rim',    ['rimshot','rim']],
+  ['cow',    ['cowbell','cow']],
+  ['shaker', ['shaker','maracas','shakerloop']],
+  ['tom',    ['tom','lowtom','midtom','hitom','tomtom']],
+  ['perc',   ['perc','percussion']]
+];
+const ZIP_SHORT = {
+  bd:'kick', sd:'snare', sn:'snare', hh:'hat', ch:'hat', oh:'hat',
+  cp:'clap', hc:'clap', rs:'rim', cb:'cow', sh:'shaker', ma:'shaker',
+  lt:'tom', mt:'tom', ht:'tom', pc:'perc'
+};
+const ZIP_RE_LONG = ZIP_LONG.map(r=>[r[0], r[1].map(w=>new RegExp('^' + w + '\\d*$'))]);
+const ZIP_RE_SHORT = Object.keys(ZIP_SHORT).map(c=>[ZIP_SHORT[c], new RegExp('^' + c + '\\d+$'), c]);
+
+const ZIP_MAX_PER_TRACK = 12;
+
+const SAMPLE_ZIP = { u8:null, entries:[], sets:{}, name:'', decoded:{}, count:0 };
+
+function classifyWav(name){
+  let base = name.replace(/^.*[\/]/, '').replace(/\.wav$/i, '').toLowerCase();
+  base = base.replace(/[^a-z0-9]+/g, ' ').trim();
+  if (!base) return null;
+  const toks = base.split(' ');
+  for (let i = 0; i < toks.length; i++){
+    for (let j = 0; j < ZIP_RE_LONG.length; j++){
+      const rs = ZIP_RE_LONG[j][1];
+      for (let k = 0; k < rs.length; k++) if (rs[k].test(toks[i])) return ZIP_RE_LONG[j][0];
+    }
+  }
+  for (let i = 0; i < toks.length; i++){
+    for (let j = 0; j < ZIP_RE_SHORT.length; j++) if (ZIP_RE_SHORT[j][1].test(toks[i])) return ZIP_RE_SHORT[j][0];
+  }
+  for (let i = 0; i < toks.length; i++){
+    for (let j = 0; j < ZIP_RE_SHORT.length; j++) if (toks[i].indexOf(ZIP_RE_SHORT[j][2]) === 0 && toks[i].length <= 6) return ZIP_RE_SHORT[j][0];
+  }
+  const flat = toks.join('');
+  if (/kick|bassdrum/.test(flat)) return 'kick';
+  if (/snare/.test(flat)) return 'snare';
+  if (/hihat|closedhat|openhat/.test(flat)) return 'hat';
+  if (/clap/.test(flat)) return 'clap';
+  if (/cowbell/.test(flat)) return 'cow';
+  if (/shaker|maracas/.test(flat)) return 'shaker';
+  if (/rimshot/.test(flat)) return 'rim';
+  if (/tom/.test(flat)) return 'tom';
+  if (/perc/.test(flat)) return 'perc';
+  return null;
+}
+
+function indexZipEntries(){
+  SAMPLE_ZIP.sets = {};
+  SAMPLE_ZIP.count = 0;
+  const en = SAMPLE_ZIP.entries;
+  for (let i = 0; i < en.length; i++){
+    if (!/\.wav$/i.test(en[i].name)) continue;
+    const tr = classifyWav(en[i].name);
+    if (!tr) continue;
+    const arr = SAMPLE_ZIP.sets[tr] || (SAMPLE_ZIP.sets[tr] = []);
+    if (arr.length < ZIP_MAX_PER_TRACK) arr.push(i);
+    SAMPLE_ZIP.count++;
+  }
+  for (const tr in SAMPLE_ZIP.sets) if (!state.sampleIdx[tr]) state.sampleIdx[tr] = 0;
+}
+
+function sampleCount(tr){
+  const a = SAMPLE_ZIP.sets[tr];
+  return a ? a.length : 0;
+}
+
+function sampleName(tr){
+  const a = SAMPLE_ZIP.sets[tr];
+  if (!a || !a.length) return null;
+  const i = Math.min(state.sampleIdx[tr] | 0, a.length - 1);
+  return SAMPLE_ZIP.entries[a[i]].name.replace(/^.*[\/]/, '').replace(/\.wav$/i, '');
+}
+
+async function decodeEntry(tr, i){
+  const key = tr + '\u0000' + i;
+  if (SAMPLE_ZIP.decoded[key]) return SAMPLE_ZIP.decoded[key];
+  const a = SAMPLE_ZIP.sets[tr];
+  if (!a || i >= a.length) return null;
+  const e = SAMPLE_ZIP.entries[a[i]];
+  const bytes = await zipEntryBytes(SAMPLE_ZIP.u8, e);
+  const ctx = AudioEngine.decCtx || AudioEngine.ctx;
+  if (!ctx) return null;
+  try {
+    const buf = await AudioEngine.decode(ctx, toArrayBuffer(bytes));
+    SAMPLE_ZIP.decoded[key] = buf;
+    return buf;
+  } catch(err){ return null; }
+}
+
+/* Подключить сэмпл к дорожке (оба движка: Tone.Sampler и резервный) */
+async function useSample(tr, i){
+  if (!AudioEngine.ready) await unlock();
+  const buf = await decodeEntry(tr, i);
+  if (!buf) return false;
+  AudioEngine.setTrackSample(tr, buf);
+  state.sampleIdx[tr] = i;
+  state.sampleSrc[tr] = 'zip';
+  if (state.track === tr) flashMeta('SAMPLE ' + sampleName(tr));
+  paint();
+  return true;
+}
+
+const sampleTracks = ()=>ORDER.filter(t=>t !== 'bass');
+
+function indexZip(u8, label){
+  const entries = zipIndex(u8);
+  const wavs = entries.filter(e=>/\.wav$/i.test(e.name));
+  if (!wavs.length) throw new Error('В архиве нет .wav');
+  SAMPLE_ZIP.u8 = u8; SAMPLE_ZIP.entries = entries; SAMPLE_ZIP.name = label || '';
+  SAMPLE_ZIP.decoded = {};
+  indexZipEntries();
+  state.hasZipSamples = true;
+  state.zipApplied = false;
+  return wavs.length;
+}
+
+/* Разложить проиндексированный архив по дорожкам — только когда аудио уже
+   разблокировано (так Safari/iPad не создаёт AudioContext без жеста). */
+async function applyZipVoices(quiet){
+  if (!SAMPLE_ZIP.entries.length || state.zipApplied) return 0;
+  const found = sampleTracks().filter(t=>sampleCount(t) > 0);
+  if (!found.length) return 0;
+  let ok = 0;
+  for (let k = 0; k < found.length; k++) if (await useSample(found[k], state.sampleIdx[found[k]] | 0)) ok++;
+  state.zipApplied = true;
+  if (!quiet) toast('EMX-1: ' + ok + ' дорожек из ' + SAMPLE_ZIP.count + ' wav');
+  paint();
+  return ok;
+}
+
+async function applySampleZip(u8, label, quiet){
+  const wavs = indexZip(u8, label);
+  const found = sampleTracks().filter(t=>sampleCount(t) > 0);
+  if (!found.length) throw new Error('Имена wav не распознаны (' + wavs + ' файлов)');
+  await unlock();
+  const ok = await applyZipVoices(quiet);
+  if (!quiet) flashMeta('SAMPLE PACK ' + ok);
+  try { idbPut(toArrayBuffer(u8), 'samples'); } catch(_){}
+  paint();
+  return { wavs: wavs, tracks: ok };
+}
+
+function cycleSample(dir){
+  const tr = state.track;
+  const n = sampleCount(tr);
+  if (!n){ toast('Нет сэмплов для ' + TRACKS[tr].short); return; }
+  let i = (state.sampleIdx[tr] | 0) + dir;
+  if (i < 0) i = n - 1;
+  if (i >= n) i = 0;
+  useSample(tr, i);
+}
+
+function restoreSamples(){
+  if (!window.indexedDB) return;
+  idbGet('samples').then(ab=>{
+    if (!ab || !ab.byteLength) return;
+    const u8 = new Uint8Array(ab);
+    const wavs = indexZip(u8, 'IndexedDB');
+    const parts = sampleTracks().filter(t=>sampleCount(t) > 0).length;
+    toast('Архив EMX-1 в памяти: ' + wavs + ' wav · ' + parts + ' дорожек');
+    paint();
+  }).catch(()=>{});
+}
+
 const AudioEngine = {
   mode:'none', ready:false, playing:false, bpm:128, step:0, cb:null, drive:0.3, decay:0.4,
   arp:0.5, detuneCents:0, fxBus:'fx1', editTarget:'fx1', modType:'sine', modDest:'cutoff',
@@ -402,6 +726,7 @@ const AudioEngine = {
     }
     this.ready = true;
     this.setBpm(this.bpm);
+    this.setAin(KNOBS.ain.v);
     this.setMaster(KNOBS.master.v);
     this.setDrive(KNOBS.tube.v);
     this.setCutoff(state.cutoff, true);
@@ -422,8 +747,16 @@ const AudioEngine = {
     this.setModDest(state.modDest);
     this.setModSync(state.modSync);
     this.upgradeSamples();
+    if (SAMPLE_ZIP.entries.length && !state.zipApplied) applyZipVoices(false);
     if ($('#lcdChip')) $('#lcdChip').textContent = this.mode.indexOf('TONE') === 0 ? 'TONE' : 'WAV';
     return this.mode;
+  },
+  setTrackSample(tr, buf){
+    const v = this.voices[tr];
+    if (!v || !buf) return false;
+    try { if (v.src && v.src.add) v.src.add(SAMPLE_NOTES[tr], buf); } catch(e){}
+    v.buf = buf;
+    return true;
   },
   now(){ return this.T ? this.T.now() : (this.ctx ? this.ctx.currentTime : 0); },
 
@@ -595,8 +928,14 @@ const AudioEngine = {
     if (this.modSync) this.setMod(KNOBS.speed.v, KNOBS.depth.v);
   },
   setMaster(v){
-    if (this.masterBus) this.masterBus.volume.value = -34 + v * 34;
-    if (this.masterGain) this.masterGain.gain.setTargetAtTime(v * v, this.now(), 0.02);
+    const db = -34 + v * 34 + (this.ain === undefined ? 0 : 20 * Math.log10(0.5 + this.ain));
+    if (this.masterBus) this.masterBus.volume.value = db;
+    if (this.masterGain) this.masterGain.gain.setTargetAtTime(v * v * (0.5 + (this.ain === undefined ? 0.5 : this.ain)), this.now(), 0.02);
+  },
+  /* AUDIO IN THRU / LEVEL — входной трим: 0.5…1.5 громкости (−6…+3.5 дБ) */
+  setAin(v){
+    this.ain = clamp(v, 0, 1);
+    this.setMaster(KNOBS.master.v);
   },
   setDrive(v){
     this.drive = v;
@@ -1127,6 +1466,8 @@ const NAV = [
   ['PATTERN',221,846,112,41],['PART EDIT',352,846,113,41],['STEP EDIT',483,846,112,41],
   ['SONG',613,846,113,41],['GLOBAL',744,846,112,41],['MIDI',874,846,113,41]
 ];
+// Две кнопки слева под дисплеем (стопка друг над другом) — CURSOR ▲ / ▼
+const CURSOR_KEYS = [['cursor-up',115,702,76,47],['cursor-down',115,777,76,48]];
 
 const deck = $('#deck'), stage = $('#stage');
 const keyEls = [], padEls = [], btnEls = {}, navEls = {}, lcdCells = [];
@@ -1345,6 +1686,31 @@ function build(){
     $('#btns').appendChild(el);
     navEls[m] = el;
   });
+  CURSOR_KEYS.forEach(function(c){
+    const fn = c[0], el = document.createElement('button');
+    el.type = 'button'; el.className = 'touch-pad nav cursor-key'; el.dataset.cursor = fn;
+    el.title = fn === 'cursor-up' ? 'CURSOR ▲' : 'CURSOR ▼';
+    place(el, c[1], c[2], c[3], c[4]);
+    el.addEventListener('pointerdown', e=>{ e.preventDefault(); press(el); doFn(fn); });
+    $('#btns').appendChild(el);
+  });
+}
+
+function menuRow(m, i){
+  const it = MENUS[m] && MENUS[m][i];
+  if (it === 'SAMPLE'){
+    const n = sampleName(state.track);
+    if (!n) return 'SAMPLE: BUILT-IN';
+    const c = sampleCount(state.track);
+    return 'SAMPLE ' + ((state.sampleIdx[state.track] | 0) + 1) + '/' + c + ' ' + n.slice(0, 14);
+  }
+  return it || '';
+}
+
+function press(el){
+  if (!el) return;
+  el.classList.add('active');
+  setTimeout(()=>el.classList.remove('active'), 130);
 }
 
 function syncStrip(){
@@ -1485,7 +1851,7 @@ function paint(){
   setText($('#lcdSong'), state.song);
   setText($('#lcdPat'), patLabel(state.pat) + (state.muted.has(state.track) ? ' M' : ''));
   const menuItems = state.menu ? MENUS[state.menu] : null;
-  setText($('#lcdTrk'), menuItems ? menuItems[state.menuIdx] : TRACKS[state.track].short);
+  setText($('#lcdTrk'), menuItems ? menuRow(state.menu, state.menuIdx) : TRACKS[state.track].short);
   for (const m in navEls){
     const on = state.menu === m;
     if (navEls[m].classList.contains('active') !== on) navEls[m].classList.toggle('active', on);
@@ -1515,15 +1881,15 @@ const idbOpen = ()=>new Promise((res, rej)=>{
     r.onerror = ()=>rej(r.error);
   } catch(e){ rej(e); }
 });
-const idbPut = v=>idbOpen().then(db=>new Promise((res, rej)=>{
+const idbPut = (v, k)=>idbOpen().then(db=>new Promise((res, rej)=>{
   const t = db.transaction('fw', 'readwrite');
-  t.objectStore('fw').put(v, 'dump');
+  t.objectStore('fw').put(v, k || 'dump');
   t.oncomplete = ()=>res(true);
   t.onerror = ()=>rej(t.error);
 }));
-const idbGet = ()=>idbOpen().then(db=>new Promise(res=>{
+const idbGet = (k)=>idbOpen().then(db=>new Promise(res=>{
   const t = db.transaction('fw', 'readonly');
-  const q = t.objectStore('fw').get('dump');
+  const q = t.objectStore('fw').get(k || 'dump');
   q.onsuccess = ()=>res(q.result || null);
   q.onerror = ()=>res(null);
 })).catch(()=>null);
@@ -1603,6 +1969,7 @@ function unlock(){
   return AudioEngine.init().then(m=>{
     AudioEngine.cb = onStep;
     if (m.indexOf('TONE') !== 0) toast('CDN недоступен — включён резервный WebAudio-движок');
+    if (SAMPLE_ZIP.entries.length && !state.zipApplied) applyZipVoices(false);
     return m;
   });
 }
@@ -1621,6 +1988,21 @@ function buildSelect(){
 function readFile(file){
   if (!file) return;
   state.fileName = file.name;
+  if (/\.zip$/i.test(file.name) || file.type === 'application/zip'){
+    const fr0 = new FileReader();
+    fr0.onload = ()=>{
+      const u8 = new Uint8Array(fr0.result);
+      toast('Читаю архив ' + (u8.length / 1048576).toFixed(2) + ' МБ…');
+      setTimeout(()=>{
+        applySampleZip(u8, file.name, false).then(r=>{
+          const badge = $('#fileBadge');
+          if (badge){ badge.textContent = 'SAMPLES / ' + r.tracks + ' PARTS'; badge.classList.remove('warn'); badge.classList.add('live'); }
+        }).catch(e=>toast('ZIP: ' + e.message));
+      }, 30);
+    };
+    fr0.readAsArrayBuffer(file);
+    return;
+  }
   const fr = new FileReader();
   fr.onload = ()=>{
     state.buf = fr.result;
@@ -1717,8 +2099,14 @@ function selectTrack(tr){
 
 function doFn(fn){
   if (!AudioEngine.ready) unlock();
-  if (fn === 'cursor-up'){ moveCursor(-1); return; }
-  if (fn === 'cursor-down'){ moveCursor(1); return; }
+  if (fn === 'cursor-up'){
+    if (state.menu === 'PART EDIT' && MENUS['PART EDIT'][state.menuIdx] === 'SAMPLE'){ cycleSample(-1); return; }
+    moveCursor(-1); return;
+  }
+  if (fn === 'cursor-down'){
+    if (state.menu === 'PART EDIT' && MENUS['PART EDIT'][state.menuIdx] === 'SAMPLE'){ cycleSample(1); return; }
+    moveCursor(1); return;
+  }
   if (fn.indexOf('menu:') === 0){
     const m = fn.slice(5);
     state.menu = (state.menu === m) ? null : m;
@@ -1869,9 +2257,11 @@ function boot(){
   window.addEventListener('orientationchange', ()=>setTimeout(layout, 120));
   try { localStorage.removeItem(FW_KEY); } catch(_){}
   loadBuiltin();
+  restoreSamples();
   restoreFirmware();
   paint();
-  window.EMX = {AudioEngine, state, KNOBS, setKnob, loadPattern, paint, hitPad, saveFirmware, restoreFirmware};
+  window.EMX = {AudioEngine, state, KNOBS, setKnob, loadPattern, paint, hitPad, saveFirmware, restoreFirmware,
+    SAMPLE_ZIP, sampleCount, sampleName, classifyWav, zipIndex, applySampleZip, menuRow, doFn, cycleSample};
   document.addEventListener('pointerdown', function once(){
     document.removeEventListener('pointerdown', once);
     unlock();
