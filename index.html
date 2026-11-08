@@ -46,14 +46,17 @@ body.showsprite .hardware-overlay{display:block}
 #valve{position:absolute;z-index:4;pointer-events:none;border-radius:50%/50%;overflow:hidden}
 #valve img{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:fill}
 .valve-glow{position:absolute;width:100%;height:100%;top:0;left:0;opacity:0;
-  transition:opacity .4s ease-in-out;pointer-events:none}
+  transition:opacity .4s ease-in-out;pointer-events:none !important}
+.valve-glow:not(.playing){opacity:0 !important}
 .valve-glow.playing{animation:valvePulse 3s infinite alternate ease-in-out}
 @keyframes valvePulse{0%{opacity:.45}100%{opacity:.95}}
-.led-indicator{position:absolute;border-radius:50%;pointer-events:none;z-index:9;
-  background:rgba(40,10,10,.65);box-shadow:inset 0 1px 2px rgba(0,0,0,.6);
+.led-indicator{position:absolute;border-radius:50%;pointer-events:none !important;z-index:9;
+  background:transparent;box-shadow:none;
   transition:background .05s linear,box-shadow .05s linear}
-.led-indicator.active{background:#ff3333;box-shadow:0 0 8px #ff3333,0 0 15px #ff0000}
-.led-indicator.blue.active{background:#0088ff;box-shadow:0 0 8px #0088ff,0 0 15px #0066ff}
+.led-indicator.active-red{background:#ff3333 !important;
+  box-shadow:0 0 6px #ff3333,0 0 12px #ff0000,inset 0 1px 2px #fff !important}
+.led-indicator.active-blue{background:#0088ff !important;
+  box-shadow:0 0 6px #0088ff,0 0 14px #0044ff,inset 0 1px 2px #fff !important}
 body.debug .led-indicator{outline:1px solid #ffe600}
 
 .kn{position:absolute;border-radius:50%;touch-action:none;cursor:grab}
@@ -73,10 +76,10 @@ body.debug .led-indicator{outline:1px solid #ffe600}
 .touch-pad{position:absolute;z-index:10;cursor:pointer;touch-action:manipulation;
   -webkit-tap-highlight-color:transparent;background:transparent;border:1px solid transparent;
   transition:background .06s linear,box-shadow .06s linear}
-.touch-pad.active{background:rgba(255,30,30,.45) !important;mix-blend-mode:color-dodge !important;
-  box-shadow:inset 0 0 12px #ff0000,inset 0 0 4px #fff !important;border:1px solid rgba(255,50,50,.4)}
-.touch-pad.blue-active{background:rgba(0,136,255,.45) !important;mix-blend-mode:color-dodge !important;
-  box-shadow:inset 0 0 12px #0088ff,inset 0 0 4px #fff !important;border:1px solid rgba(80,180,255,.45)}
+.touch-pad.active{background:rgba(255,30,30,.4) !important;mix-blend-mode:color-dodge !important;
+  box-shadow:inset 0 0 12px #ff0000,inset 0 0 4px #ffffff !important;border:1px solid rgba(255,50,50,.3) !important}
+.touch-pad.blue-active{background:rgba(0,136,255,.4) !important;mix-blend-mode:color-dodge !important;
+  box-shadow:inset 0 0 12px #0088ff,inset 0 0 4px #ffffff !important;border:1px solid rgba(50,150,255,.3) !important}
 .touch-pad.cur{outline:2px solid rgba(255,255,255,.85);outline-offset:-2px;mix-blend-mode:screen !important}
 .touch-pad.hit{background:rgba(255,255,255,.55) !important;mix-blend-mode:color-dodge !important}
 
@@ -178,10 +181,18 @@ const $ = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>Array.from(r.querySelectorAll(s));
 const clamp = (v,a,b)=>v<a?a:(v>b?b:v);
 const BLOCK = 9984, PATTERNS = 128, DUMP = 1831424, IMG_W = 2221, IMG_H = 1566;
-const ORDER = ['kick','snare','hat','bass'];
+const DEFAULT_PAT = 13;
+const DRUMS = ['kick','snare','hat','tom','clap','rim','cow','shaker','perc'];
+const ORDER = DRUMS.concat(['bass']);
 const TRACKS = {
-  kick:{name:'KICK'}, snare:{name:'SNARE'}, hat:{name:'HI-HAT'}, bass:{name:'SYNTH BASS'}
+  kick:{name:'KICK', led:0}, snare:{name:'SNARE', led:1}, hat:{name:'HI-HAT', led:2},
+  tom:{name:'TOM', led:3}, clap:{name:'CLAP', led:4}, rim:{name:'RIM SHOT', led:5},
+  cow:{name:'COWBELL', led:6}, shaker:{name:'SHAKER', led:7}, perc:{name:'PERC', led:7},
+  bass:{name:'SYNTH BASS', led:3}
 };
+const STEP_OFF = {kick:0x40, snare:0x50, hat:0x60, bass:0x70,
+  tom:0x80, clap:0x90, rim:0xA0, cow:0xB0, shaker:0xC0, perc:0xD0};
+const emptySteps = ()=>ORDER.reduce((o,t)=>{ o[t] = new Array(16).fill(false); return o; }, {});
 const NAMES = ['SpaceJox','Deep Floor','Acid Rain','Night Bus','Elek Fonk','Tube Drive','Cold Wave','Dusty Hat','Neon Tape','Ghost Step','Warm Valve','Tape Hiss'];
 const BASS_NOTES = ['C2','C2','G1','C2','D#2','C2','G1','A#1'];
 const PENTA = ['C2','D#2','F2','G2','A#2','C3','D#3','F3'];
@@ -191,7 +202,7 @@ const state = {
   isDemoMode:true, arp:0.5,
   muted:new Set(), solo:null, buf:null, fileName:'', tempoLock:false,
   cutoff:0.62, reso:0.25, ftype:'lowpass',
-  steps:{kick:new Array(16).fill(false), snare:new Array(16).fill(false), hat:new Array(16).fill(false), bass:new Array(16).fill(false)}
+  steps:emptySteps()
 };
 
 const KNOBS = {
@@ -262,6 +273,21 @@ const AudioEngine = {
     this.hatS.volume.value = -21;
     this.tomS = new T.MembraneSynth({ pitchDecay:0.06, octaves:4, envelope:{ attack:0.001, decay:0.28, sustain:0, release:0.4 } }).connect(this.bus);
     this.tomS.volume.value = -9;
+    this.clapF = new T.Filter({ type:'bandpass', frequency:1500, Q:1.2 }).connect(this.bus);
+    this.clapS = new T.NoiseSynth({ noise:{type:'white'}, envelope:{ attack:0.001, decay:0.13, sustain:0, release:0.03 } }).connect(this.clapF);
+    this.clapS.volume.value = -10;
+    this.rimS = new T.MetalSynth({ frequency:340, envelope:{ attack:0.001, decay:0.045, release:0.02 },
+      harmonicity:6.2, modulationIndex:22, resonance:5400, octaves:1.4 }).connect(this.bus);
+    this.rimS.volume.value = -20;
+    this.cowS = new T.MembraneSynth({ pitchDecay:0.015, octaves:1.4, oscillator:{type:'square'},
+      envelope:{ attack:0.001, decay:0.42, sustain:0, release:0.15 } }).connect(this.bus);
+    this.cowS.volume.value = -16;
+    this.shakerF = new T.Filter({ type:'highpass', frequency:6200, Q:0.7 }).connect(this.bus);
+    this.shakerS = new T.NoiseSynth({ noise:{type:'pink'}, envelope:{ attack:0.005, decay:0.055, sustain:0, release:0.02 } }).connect(this.shakerF);
+    this.shakerS.volume.value = -19;
+    this.percS = new T.MetalSynth({ frequency:190, envelope:{ attack:0.001, decay:0.16, release:0.05 },
+      harmonicity:3.2, modulationIndex:16, resonance:2800, octaves:1.6 }).connect(this.bus);
+    this.percS.volume.value = -19;
     this.filterN = new T.Filter({ type:'lowpass', rolloff:-12, frequency:cutoffHz(state.cutoff), Q:resoQ(state.reso) }).connect(this.bus);
     this.bassS = new T.MonoSynth({ oscillator:{type:'sawtooth'},
       envelope:{ attack:0.006, decay:0.2, sustain:0.45, release:0.28 },
@@ -351,6 +377,25 @@ const AudioEngine = {
     if (this.bassS) this.bassS.envelope.release = 0.06 + v * 1.1;
   },
   gainNode(){ return this.pre || this.bus; },
+  fbTone(t, o){
+    const ctx = this.ctx, osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type = o.type || 'sine';
+    osc.frequency.setValueAtTime(o.f0, t);
+    if (o.f1 && o.f1 !== o.f0) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + (o.pd || 0.09));
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(o.gain, t + (o.atk || 0.005));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+    osc.connect(g); g.connect(this.pre); osc.start(t); osc.stop(t + o.dur + 0.05);
+  },
+  fbNoise(t, o){
+    const ctx = this.ctx, src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = this.noiseBuf;
+    f.type = o.type || 'bandpass'; f.frequency.value = o.freq; if (o.q != null) f.Q.value = o.q;
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(o.gain, t + (o.atk || 0.003));
+    g.gain.exponentialRampToValueAtTime(0.0001, t + o.dur);
+    src.connect(f); f.connect(g); g.connect(this.pre); src.start(t); src.stop(t + o.dur + 0.05);
+  },
   kick(time, vel){
     if (!this.ready) return;
     const t = time != null ? time : this.now();
@@ -417,6 +462,39 @@ const AudioEngine = {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.24);
     o.connect(g); g.connect(this.pre); o.start(t); o.stop(t + 0.3);
   },
+  clap(time, vel){
+    if (!this.ready) return;
+    const t = time != null ? time : this.now(), v = vel || 0.9;
+    if (this.clapS){ this.clapS.triggerAttackRelease('16n', t, v); return; }
+    this.fbNoise(t, {type:'bandpass', freq:1500, q:1.2, dur:0.14, gain:0.5 * v});
+    this.fbNoise(t + 0.013, {type:'bandpass', freq:1850, q:1.0, dur:0.12, gain:0.32 * v});
+  },
+  rim(time, vel){
+    if (!this.ready) return;
+    const t = time != null ? time : this.now(), v = vel || 0.85;
+    if (this.rimS){ this.rimS.triggerAttackRelease('32n', t, v); return; }
+    this.fbNoise(t, {type:'bandpass', freq:2600, q:6, dur:0.05, gain:0.4 * v});
+    this.fbTone(t, {f0:1700, f1:900, pd:0.03, dur:0.045, gain:0.16 * v, type:'square'});
+  },
+  cow(time, vel){
+    if (!this.ready) return;
+    const t = time != null ? time : this.now(), v = vel || 0.85;
+    if (this.cowS){ this.cowS.triggerAttackRelease('C4', '16n', t, v); return; }
+    this.fbTone(t, {f0:566, f1:520, pd:0.05, dur:0.4, gain:0.26 * v, type:'square'});
+  },
+  shaker(time, vel){
+    if (!this.ready) return;
+    const t = time != null ? time : this.now(), v = vel || 0.75;
+    if (this.shakerS){ this.shakerS.triggerAttackRelease('32n', t, v); return; }
+    this.fbNoise(t, {type:'highpass', freq:6200, q:0.7, dur:0.06, gain:0.22 * v, atk:0.006});
+  },
+  perc(time, vel){
+    if (!this.ready) return;
+    const t = time != null ? time : this.now(), v = vel || 0.8;
+    if (this.percS){ this.percS.triggerAttackRelease('16n', t, v); return; }
+    this.fbNoise(t, {type:'bandpass', freq:900, q:2, dur:0.16, gain:0.3 * v});
+    this.fbTone(t, {f0:330, f1:180, pd:0.06, dur:0.13, gain:0.18 * v, type:'triangle'});
+  },
   fire(s, time){
     const st = state.steps, solo = state.solo;
     const on = t => !state.muted.has(t) && (!solo || solo === t);
@@ -424,6 +502,10 @@ const AudioEngine = {
     if (st.snare[s] && on('snare')) this.snare(time, 0.9);
     if (st.hat[s] && on('hat')) this.hat(time, s % 4 === 2);
     if (st.bass[s] && on('bass')) this.bass(time, BASS_NOTES[s % 8]);
+    for (let i = 3; i < DRUMS.length; i++){
+      const t = DRUMS[i];
+      if (st[t] && st[t][s] && on(t)) this[t](time, 0.85);
+    }
   },
   play(){
     if (!this.ready) return;
@@ -474,26 +556,38 @@ const SPACEJOX = {
   kick:  [1,0,0,0, 1,0,0,1, 1,0,0,0, 1,0,1,0],
   snare: [0,0,0,1, 0,0,0,0, 0,0,0,1, 0,0,0,1],
   hat:   [0,0,1,0, 0,0,1,0, 0,0,1,0, 0,1,1,1],
+  tom:   [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+  clap:  [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,1,0],
+  rim:   [0,0,0,0, 0,0,0,0, 0,0,1,0, 0,0,0,0],
+  cow:   [0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0],
+  shaker:[0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1],
+  perc:  [0,0,0,0, 0,0,0,0, 0,1,0,0, 0,0,0,0],
   bass:  [1,0,0,1, 1,0,1,0, 1,0,0,1, 1,0,1,0]
 };
 function demoPattern(i){
   const r = mulberry32(7919 + i * 104729);
   if (i === 0){
-    state.steps = {kick:SPACEJOX.kick.map(Boolean), snare:SPACEJOX.snare.map(Boolean),
-                   hat:SPACEJOX.hat.map(Boolean), bass:SPACEJOX.bass.map(Boolean)};
+    state.steps = emptySteps();
+    ORDER.forEach(t=>{ state.steps[t] = SPACEJOX[t].map(Boolean); });
     state.bpm = 128; state.cutoff = 0.62; state.reso = 0.28; state.song = 'SpaceJox';
     return;
   }
-  const st = {kick:[],snare:[],hat:[],bass:[]};
+  const st = emptySteps();
   for (let s=0;s<16;s++){
-    st.kick[s]  = (s % 4 === 0) ? r() > 0.12 : r() > 0.88;
-    st.snare[s] = (s % 8 === 4) ? r() > 0.2 : r() > 0.9;
-    st.hat[s]   = r() > (s % 2 ? 0.38 : 0.72);
-    st.bass[s]  = r() > 0.5;
+    st.kick[s]   = (s % 4 === 0) ? r() > 0.12 : r() > 0.88;
+    st.snare[s]  = (s % 8 === 4) ? r() > 0.2 : r() > 0.9;
+    st.hat[s]    = r() > (s % 2 ? 0.38 : 0.72);
+    st.tom[s]    = r() > 0.94;
+    st.clap[s]   = (s % 8 === 4) ? r() > 0.45 : r() > 0.95;
+    st.rim[s]    = r() > 0.93;
+    st.cow[s]    = r() > 0.96;
+    st.shaker[s] = r() > 0.7;
+    st.perc[s]   = r() > 0.9;
+    st.bass[s]   = r() > 0.5;
   }
   state.steps = st;
   state.bpm = 88 + Math.round(r() * 62);
-  state.song = NAMES[i % NAMES.length] + (i >= NAMES.length ? ' ' + (i+1) : '');
+  state.song = i === DEFAULT_PAT ? 'Deep Floor' : NAMES[i % NAMES.length] + (i >= NAMES.length ? ' ' + (i+1) : '');
   state.cutoff = 0.32 + r() * 0.6;
   state.reso = 0.06 + r() * 0.55;
 }
@@ -512,7 +606,8 @@ function parseBin(index){
     for (let i=0;i<16;i++) out[i] = dv.getUint8(off + start + i) > 0;
     return out;
   };
-  state.steps = { kick:read(0x40), snare:read(0x50), hat:read(0x60), bass:read(0x70) };
+  state.steps = emptySteps();
+  ORDER.forEach(t=>{ state.steps[t] = read(STEP_OFF[t]); });
   if (!state.tempoLock) state.bpm = bpm;
   state.cutoff = dv.getUint8(off + 0x011A) / 127;
   state.reso = dv.getUint8(off + 0x011B) / 127;
@@ -544,7 +639,8 @@ const DRUM = {x:560, dx:99.2, y:1091, w:79, h:132};
 const SYNTH = {x:1553, dx:99.2, y:1092, w:79, h:132};
 const PADS = [
   {id:'kick', row:0, track:'kick'}, {id:'snare', row:0, track:'snare'}, {id:'hat', row:0, track:'hat'},
-  {id:'tom', row:0}, {id:'clap', row:0}, {id:'rim', row:0}, {id:'cow', row:0}, {id:'shaker', row:0}, {id:'perc', row:0},
+  {id:'tom', row:0, track:'tom'}, {id:'clap', row:0, track:'clap'}, {id:'rim', row:0, track:'rim'},
+  {id:'cow', row:0, track:'cow'}, {id:'shaker', row:0, track:'shaker'}, {id:'perc', row:0, track:'perc'},
   {id:'bass', row:1, track:'bass'}, {id:'n2', row:1, note:'D#2'}, {id:'n3', row:1, note:'F2'},
   {id:'n4', row:1, note:'G2'}, {id:'n5', row:1, note:'A#2'}
 ];
@@ -704,7 +800,8 @@ function preview(track, i){
   if (track === 'kick') AudioEngine.kick(null, 1);
   else if (track === 'snare') AudioEngine.snare(null, 0.9);
   else if (track === 'hat') AudioEngine.hat(null, i % 4 === 2);
-  else AudioEngine.bass(null, BASS_NOTES[i % 8]);
+  else if (track === 'bass') AudioEngine.bass(null, BASS_NOTES[i % 8]);
+  else if (typeof AudioEngine[track] === 'function') AudioEngine[track](null, 0.85);
 }
 
 function hitPad(el){
@@ -712,12 +809,6 @@ function hitPad(el){
   const d = el._def;
   if (d.track){ state.track = d.track; preview(d.track, 0); }
   else if (d.note) AudioEngine.bass(null, d.note);
-  else if (d.id === 'tom') AudioEngine.tom(null, 'G2');
-  else if (d.id === 'clap') AudioEngine.snare(null, 1);
-  else if (d.id === 'rim') AudioEngine.hat(null, false);
-  else if (d.id === 'cow') AudioEngine.tom(null, 'C3');
-  else if (d.id === 'shaker') AudioEngine.hat(null, false);
-  else if (d.id === 'perc') AudioEngine.tom(null, 'D3');
   paint();
 }
 
@@ -771,11 +862,10 @@ function flashLed(el, cls, ms){
   el._t = setTimeout(()=>el.classList.remove(cls), ms || 80);
 }
 function flashTrack(t){
-  const map = {kick:0, snare:1, hat:2, bass:3};
-  const i = map[t];
-  if (i === undefined) return;
-  flashLed(ledBlue[i], 'active', 80);
-  if (i < 3) flashLed(ledFx[i], 'active', 80);
+  const tr = TRACKS[t];
+  if (!tr || tr.led === undefined) return;
+  flashLed(ledBlue[tr.led], 'active-blue', 80);
+  if (t === 'kick' || t === 'snare' || t === 'hat') flashLed(ledFx[tr.led], 'active-red', 80);
 }
 
 function paint(){
@@ -810,10 +900,90 @@ function paint(){
 let rafPending = false;
 function onStep(s){
   state.step = s;
-  for (const t of ['kick','snare','hat','bass']) if (state.steps[t] && state.steps[t][s]) flashTrack(t);
+  for (const t of ORDER) if (state.steps[t] && state.steps[t][s]) flashTrack(t);
   if (rafPending) return;
   rafPending = true;
   requestAnimationFrame(()=>{ rafPending = false; paint(); });
+}
+
+const FW_KEY = 'korg_emx_firmware';
+const b64 = (buf)=>{
+  const u8 = new Uint8Array(buf);
+  let out = '';
+  const CH = 8192;
+  for (let i = 0; i < u8.length; i += CH) out += String.fromCharCode.apply(null, u8.subarray(i, i + CH));
+  return btoa(out);
+};
+const unb64 = (str)=>{
+  const CH = 8192, len = str.length;
+  const out = new Uint8Array(Math.floor(len * 3 / 4) + 4);
+  let p = 0;
+  for (let i = 0; i < len; i += CH){
+    const part = atob(str.slice(i, i + CH));
+    for (let j = 0; j < part.length; j++) out[p++] = part.charCodeAt(j);
+  }
+  return out.buffer.slice(0, p);
+};
+const idbOpen = ()=>new Promise((res, rej)=>{
+  try {
+    const r = indexedDB.open('emx_fw', 1);
+    r.onupgradeneeded = ()=>{ r.result.createObjectStore('fw'); };
+    r.onsuccess = ()=>res(r.result);
+    r.onerror = ()=>rej(r.error);
+  } catch(e){ rej(e); }
+});
+const idbPut = v=>idbOpen().then(db=>new Promise((res, rej)=>{
+  const t = db.transaction('fw', 'readwrite');
+  t.objectStore('fw').put(v, 'dump');
+  t.oncomplete = ()=>res(true);
+  t.onerror = ()=>rej(t.error);
+}));
+const idbGet = ()=>idbOpen().then(db=>new Promise(res=>{
+  const t = db.transaction('fw', 'readonly');
+  const q = t.objectStore('fw').get('dump');
+  q.onsuccess = ()=>res(q.result || null);
+  q.onerror = ()=>res(null);
+})).catch(()=>null);
+
+function saveFirmware(buf){
+  try {
+    localStorage.setItem(FW_KEY, b64(buf));
+    toast('Прошивка сохранена в браузере — демо-режим отключён');
+  } catch(e){
+    if (window.indexedDB){
+      idbPut(buf).then(()=>toast('Прошивка сохранена в IndexedDB — демо-режим отключён'))
+        .catch(()=>toast('Не удалось сохранить прошивку: ' + (e && e.name ? e.name : 'ошибка памяти')));
+    } else {
+      toast('Не удалось сохранить прошивку: ' + (e && e.name ? e.name : 'ошибка памяти'));
+    }
+  }
+}
+
+function applyFirmware(buf, quiet){
+  if (!buf || !buf.byteLength) return false;
+  state.buf = buf;
+  state.isDemoMode = false;
+  const badge = $('#fileBadge');
+  if (badge){
+    badge.textContent = 'LIVE / ORIGINAL DATA';
+    badge.classList.remove('warn');
+    badge.classList.add('live');
+  }
+  loadPattern(DEFAULT_PAT);
+  if (!quiet) toast('Прошивка восстановлена из памяти браузера · ' + patLabel(DEFAULT_PAT));
+  return true;
+}
+
+function restoreFirmware(){
+  let raw = null;
+  try { raw = localStorage.getItem(FW_KEY); } catch(_){}
+  if (raw){
+    try { if (applyFirmware(unb64(raw), true)) return true; } catch(e){ console.warn('fw', e); }
+  }
+  if (window.indexedDB){
+    idbGet().then(buf=>{ if (!state.buf && buf) applyFirmware(buf, false); });
+  }
+  return false;
 }
 
 function unlock(){
@@ -843,6 +1013,7 @@ function readFile(file){
   fr.onload = ()=>{
     state.buf = fr.result;
     state.isDemoMode = false;
+    setTimeout(()=>saveFirmware(state.buf), 0);
     const badge = $('#fileBadge');
     badge.textContent = 'LIVE / ORIGINAL DATA';
     badge.classList.remove('warn');
@@ -909,7 +1080,8 @@ function bindInputs(){
     if (e.code === 'ArrowRight') loadPattern((state.pat + 1) % PATTERNS);
     if (e.code === 'ArrowLeft') loadPattern((state.pat + PATTERNS - 1) % PATTERNS);
     const n = parseInt(e.key, 10);
-    if (n >= 1 && n <= 4) { state.track = ORDER[n-1]; paint(); }
+    if (n >= 1 && n <= 9) { state.track = DRUMS[n-1]; paint(); }
+    if (n === 0) { state.track = 'bass'; paint(); }
   });
   document.addEventListener('gesturestart', e=>e.preventDefault());
 }
@@ -927,9 +1099,9 @@ function boot(){
   const ro = ()=>{ layout(); };
   window.addEventListener('resize', ro);
   window.addEventListener('orientationchange', ()=>setTimeout(layout, 120));
-  loadPattern(0);
+  if (!restoreFirmware()) loadPattern(0);
   paint();
-  window.EMX = {AudioEngine, state, KNOBS, setKnob, loadPattern, paint, hitPad};
+  window.EMX = {AudioEngine, state, KNOBS, setKnob, loadPattern, paint, hitPad, saveFirmware, restoreFirmware};
   document.addEventListener('pointerdown', function once(){
     document.removeEventListener('pointerdown', once);
     unlock();
