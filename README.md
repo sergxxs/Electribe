@@ -80,7 +80,18 @@
 
 * `Tone.js 14.8.49` с cdnjs; контекст создаётся по первому касанию (`latencyHint: 'interactive'`,
   `lookAhead: 0.02`), чтобы не блокировать запуск и не ломать autoplay-политику Safari.
-* Цепочка: партии → `Tone.Distortion` (Tube Saturation) → `Tone.Limiter` → выход.
+* **Статическая шина эффектов** создаётся один раз при старте и никогда не перестраивается:
+
+  ```
+  Sampler (9 дорог) ─┐
+                     ├─→ Volume ─→ Distortion (Tube Gain) ─→ Filter (FX1) ─→ PingPongDelay (FX2) ─→ Phaser (FX3) ─→ Limiter ─→ Out
+  MonoSynth (бас) ─→ Filter ─→ Panner ─┘
+                                        ↑ LFO (MODULATION) подключён к частоте фильтра баса
+  ```
+
+  Эффекты не создаются и не удаляются на ходу: включение/выключение — это `wet.value = 0`
+  или `1` (`Tone.Filter` «в обходе» выставляется в `frequency = 20000 Hz`, `Q = 1`).
+  Переключение секции FX — кнопкой FILTER TYPE или байтом `+0x0120` (`OFF → FILTER → DELAY → PHASER`).
 * Ударные больше **не синтезируются**: ни одного `MembraneSynth`/`NoiseSynth`/`MetalSynth`.
   Внутрь файла зашиты 9 коротких WAV-сэмплов (моно, 22.05 кГц, 16 бит, 0.09–0.45 с,
   ~108 КБ на все девять в Base64), они декодируются один раз в `AudioBuffer` и складываются
@@ -108,6 +119,28 @@
 * Если CDN недоступен, автоматически включается компактный резервный WebAudio-движок с тем же API
   (lookahead-планировщик 25 мс) — панель остаётся играбельной офлайн.
 
+## Маппинг обведённых секций
+
+| Ручка | Куда идёт | Диапазон |
+|---|---|---|
+| **TUBE GAIN** | `Distortion.distortion` + `wet` | 0…1 |
+| **FX EDIT 1** | `Filter.frequency` (FX1) / `Phaser.frequency` / `PingPongDelay.delayTime` | 120 Гц…7.6 кГц / 0.1…9 Гц / 0.06…0.56 с |
+| **FX EDIT 2** | `Filter.Q` (FX1) / `Phaser.octaves` / `PingPongDelay.feedback` и `wet` | 0.6…9.6 / 1…5 / 0.15…0.85 |
+| **OSC EDIT 1** | `bassS.oscillator.type` | sawtooth → square → triangle |
+| **OSC EDIT 2** | `bassS.detune` | 0…100 центов |
+| **MOD SPEED** | `lfo.frequency` | 0.1…20 Гц (экспоненциально) |
+| **MOD DEPTH** | `lfoAmt.gain` → `filterN.frequency` | ±0…2600 Гц |
+| **PITCH / GLIDE** | `bassS.portamento` | 0…0.5 с |
+| **PAN** | `panner.pan` (PART COMMON) | −1…+1 |
+| **CUTOFF / RESONANCE** | `filterN.frequency` / `filterN.Q` | 55 Гц…10 кГц / 0.4…24 |
+| **ARPEGGIATOR (слайдер)** | `bassS.detune` ±700 центов + высота арпеджио | 0…1 |
+
+Все ручки крутятся `--rot` от −140° до +140°, `pointermove` батчится через
+`requestAnimationFrame`, `will-change: transform`. Резервный WebAudio-движок повторяет
+ту же шину на нативных узлах: `WaveShaper` → `BiquadFilter` → два `DelayNode` с
+перекрёстной обратной связью и `StereoPanner` (±1) → четыре `allpass`-биквада с одним
+LFO → `DynamicsCompressor`.
+
 ## Формат дампа
 
 Дамп карты — 1 831 424 байта, 128 паттернов блоками по **9984** байта, `offset = index * 9984`
@@ -121,8 +154,18 @@
 | `+0x0060` | DRUM PART 3 — HI-HAT, 16 байт | (`0x5a`) |
 | `+0x0070` | SYNTH PART 1 — BASS, 16 байт | (`0x3c`) |
 | `+0x0080…0x00D0` | PART 4, 5, 6A, 6B, 7A, 7B (TOM, CLAP, RIM, COW, SHAKER, PERC) | шаг `0x10`, тот же формат — **экстраполяция** stride: в предоставленном дампе эти области нулевые |
+| `+0x0112` | Pitch / Glide `0–127`, центр 64 | `(v-64)/63` → ручка PITCH/GLIDE + `portamento` |
+| `+0x0115` | Pan `0–127`, центр 64 | `(v-64)/63` → ручка PAN + `panner.pan` |
 | `+0x011A` | Cutoff `0–127` | `/127` → ручка CUTOFF + `filter.frequency` |
 | `+0x011B` | Resonance `0–127` | `/127` → ручка RESONANCE + `filter.Q` |
+| `+0x0120` | Тип FX-секции | `% 4` → `OFF / FILTER / DELAY / PHASER`, переключение `wet` |
+| `+0x0124` | MOD SPEED | `/127` → `lfo.frequency` 0.1…20 Гц |
+
+Нулевой байт в `+0x0112` / `+0x0115` / `+0x0124` трактуется как «нет данных» и даёт
+центральное значение (в предоставленном дампе эти поля пустые, заполнены только
+`+0x011A` / `+0x011B`). Янтарный LCD (`Courier New`, `font-weight: 900`) показывает
+песню, BPM, паттерн, партию, режим и строку параметров `C70 R30 OFF`
+(Cutoff / Resonance / активный FX).
 
 **Что реально лежит в дампе.** Анализ приложенного файла (`1 831 424` байта): ненулевых байт
 в нём всего **51**, и все они в блоках **0 (A.01)** и **2 (A.03)** в диапазоне `0x00…0x11B`.

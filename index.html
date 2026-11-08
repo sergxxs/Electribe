@@ -135,6 +135,7 @@ body.dragging #lcd{transition:none !important}
   padding:7px 15px;border-radius:999px;background:rgba(8,18,28,.92);border:1px solid rgba(120,170,255,.35);
   color:#d3e3f6;font:600 11px/1 "Helvetica Neue",Arial;letter-spacing:.02em}
 @media (orientation:portrait) and (max-width:980px){#rot{display:block}}
+#lcdParam{opacity:.72;letter-spacing:calc(var(--u)*-0.03)}
 #lcdInfo{margin-left:auto;font-size:.82em;opacity:0;transition:opacity .18s ease;letter-spacing:calc(var(--u)*-0.02)}
 body.debug .key,body.debug .pad,body.debug .btn{outline:1px solid #00ff5a !important;mix-blend-mode:normal !important;background:rgba(0,255,90,.10) !important}
 body.debug .hardware-overlay{display:block;opacity:.5}
@@ -153,7 +154,7 @@ body.debug #ribbon{outline:1px solid #ffaa00 !important;background:rgba(255,170,
       <div class="lcd-song" id="lcdSong">SpaceJox</div>
       <div class="lcd-bpm"><span id="lcdBpm">128.0</span><small>BPM</small></div>
     </div>
-    <div class="lcd-mid"><b id="lcdPat">A.01</b><span id="lcdTrk">KICK</span><span id="lcdMode">STOP</span><span id="lcdInfo"></span></div>
+    <div class="lcd-mid"><b id="lcdPat">A.01</b><span id="lcdTrk">KICK</span><span id="lcdMode">STOP</span><span id="lcdParam"></span><span id="lcdInfo"></span></div>
     <div class="lcd-grid" id="lcdGrid"></div>
   </div>
   <div id="valve">
@@ -229,21 +230,23 @@ const DEFAULT_PAT = 13;
 const DRUMS = ['kick','snare','hat','tom','clap','rim','cow','shaker','perc'];
 const ORDER = DRUMS.concat(['bass']);
 const TRACKS = {
-  kick:{name:'KICK', led:0}, snare:{name:'SNARE', led:1}, hat:{name:'HI-HAT', led:2},
-  tom:{name:'TOM', led:3}, clap:{name:'CLAP', led:4}, rim:{name:'RIM SHOT', led:5},
-  cow:{name:'COWBELL', led:6}, shaker:{name:'SHAKER', led:7}, perc:{name:'PERC', led:7},
-  bass:{name:'SYNTH BASS', led:3}
+  kick:{name:'KICK', short:'KICK', led:0}, snare:{name:'SNARE', short:'SNR', led:1}, hat:{name:'HI-HAT', short:'HAT', led:2},
+  tom:{name:'TOM', short:'TOM', led:3}, clap:{name:'CLAP', short:'CLAP', led:4}, rim:{name:'RIM SHOT', short:'RIM', led:5},
+  cow:{name:'COWBELL', short:'COW', led:6}, shaker:{name:'SHAKER', short:'SHK', led:7}, perc:{name:'PERC', short:'PER', led:7},
+  bass:{name:'SYNTH BASS', short:'BASS', led:3}
 };
 const STEP_OFF = {kick:0x40, snare:0x50, hat:0x60, bass:0x70,
   tom:0x80, clap:0x90, rim:0xA0, cow:0xB0, shaker:0xC0, perc:0xD0};
 const emptySteps = ()=>ORDER.reduce((o,t)=>{ o[t] = new Array(16).fill(false); return o; }, {});
+const FX_KINDS = ['off','filter','delay','phaser'];
+const oscType = v => v < 0.34 ? 'sawtooth' : (v < 0.67 ? 'square' : 'triangle');
 const NAMES = ['SpaceJox','Deep Floor','Acid Rain','Night Bus','Elek Fonk','Tube Drive','Cold Wave','Dusty Hat','Neon Tape','Ghost Step','Warm Valve','Tape Hiss'];
 const BASS_NOTES = ['C2','C2','G1','C2','D#2','C2','G1','A#1'];
 const PENTA = ['C2','D#2','F2','G2','A#2','C3','D#3','F3'];
 
 const state = {
   pat:0, bpm:128, song:'SpaceJox', track:'kick', step:-1, playing:false, rec:false,
-  isDemoMode:false, arp:0.5,
+  isDemoMode:false, arp:0.5, fxKind:'off', oscType:'sawtooth',
   muted:new Set(), solo:null, buf:null, fileName:'', tempoLock:false,
   cutoff:0.62, reso:0.25, ftype:'lowpass',
   steps:emptySteps()
@@ -329,6 +332,12 @@ const AudioEngine = {
     this.setCutoff(state.cutoff, true);
     this.setReso(state.reso, true);
     this.setArp(state.arp);
+    this.setFx(state.fxKind);
+    this.setFxEdit(KNOBS.fxe1.v, KNOBS.fxe2.v);
+    this.setMod(KNOBS.speed.v, KNOBS.depth.v);
+    this.setOsc(oscType(KNOBS.osc1.v), KNOBS.osc2.v);
+    this.setPan(KNOBS.pan.v);
+    this.setGlide(KNOBS.pitch.v);
     if ($('#lcdChip')) $('#lcdChip').textContent = this.mode.indexOf('TONE')===0 ? 'TONE' : 'WAV';
     return this.mode;
   },
@@ -341,8 +350,12 @@ const AudioEngine = {
     if (ctx.updateInterval !== undefined) ctx.updateInterval = 0.02;
     if (T.start) T.start();
     this.limiter = new T.Limiter(-1).toDestination();
-    this.shaper = new T.Distortion({ distortion:this.drive, wet:0.6, oversample:'none' }).connect(this.limiter);
+    this.phaser = new T.Phaser({ frequency:0.6, octaves:3, baseFrequency:700, Q:6, wet:0 }).connect(this.limiter);
+    this.delay = new T.PingPongDelay({ delayTime:0.28, feedback:0.35, wet:0 }).connect(this.phaser);
+    this.fxF = new T.Filter({ type:'lowpass', rolloff:-12, frequency:20000, Q:1 }).connect(this.delay);
+    this.shaper = new T.Distortion({ distortion:this.drive, wet:0.6, oversample:'none' }).connect(this.fxF);
     this.bus = new T.Volume(-8).connect(this.shaper);
+    this.panner = new T.Panner(0).connect(this.bus);
     this.sampler = new T.Sampler({ urls:{} });
     this.sampler.volume.value = -3;
     this.sampler.connect(this.bus);
@@ -352,7 +365,11 @@ const AudioEngine = {
         if (b) this.sampler.add(SAMPLE_NOTES[tr], b);
       }
     }
-    this.filterN = new T.Filter({ type:'lowpass', rolloff:-12, frequency:cutoffHz(state.cutoff), Q:resoQ(state.reso) }).connect(this.bus);
+    this.filterN = new T.Filter({ type:'lowpass', rolloff:-12, frequency:cutoffHz(state.cutoff), Q:resoQ(state.reso) }).connect(this.panner);
+    this.lfo = new T.LFO({ frequency:2, min:-1, max:1, type:'sine' }).start();
+    this.lfoAmt = new T.Gain(0);
+    this.lfo.connect(this.lfoAmt);
+    this.lfoAmt.connect(this.filterN.frequency);
     this.bassS = new T.MonoSynth({ oscillator:{type:'sawtooth'},
       envelope:{ attack:0.006, decay:0.2, sustain:0.45, release:0.28 },
       filter:{ Q:0.1, type:'lowpass', rolloff:-12, frequency:15000 },
@@ -382,12 +399,132 @@ const AudioEngine = {
     const shaper = ctx.createWaveShaper(); shaper.curve = this.makeCurve(this.drive); shaper.oversample = 'none';
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -12; comp.knee.value = 14; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.12;
-    pre.connect(shaper); shaper.connect(post); post.connect(comp); comp.connect(master); master.connect(ctx.destination);
+    const fxFilter = ctx.createBiquadFilter();
+    fxFilter.type = 'lowpass'; fxFilter.frequency.value = 20000; fxFilter.Q.value = 1;
+    const dIn = ctx.createGain();
+    const dDry = ctx.createGain(); dDry.gain.value = 1;
+    const dWet = ctx.createGain(); dWet.gain.value = 0;
+    const dL = ctx.createDelay(1.0), dR = ctx.createDelay(1.0);
+    const pL = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+    const pR = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createGain();
+    if (pL.pan) pL.pan.value = -1;
+    if (pR.pan) pR.pan.value = 1;
+    const dFb = ctx.createGain(); dFb.gain.value = 0.35;
+    const phIn = ctx.createGain();
+    const phDry = ctx.createGain(); phDry.gain.value = 1;
+    const phWet = ctx.createGain(); phWet.gain.value = 0;
+    const aps = [];
+    for (let i = 0; i < 4; i++){
+      const ap = ctx.createBiquadFilter();
+      ap.type = 'allpass'; ap.frequency.value = 300 * (i + 1); ap.Q.value = 1;
+      aps.push(ap);
+    }
+    const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 2;
+    const lfoHz = ctx.createGain(); lfoHz.gain.value = 0;
+    const lfoAmt = ctx.createGain(); lfoAmt.gain.value = 0;
+    lfo.connect(lfoAmt); lfoAmt.connect(lfoHz);
+    aps.forEach(ap=>lfoHz.connect(ap.frequency));
+    lfo.start();
+    pre.connect(shaper); shaper.connect(post); post.connect(fxFilter);
+    fxFilter.connect(dIn);
+    dIn.connect(dDry); dDry.connect(phIn);
+    dIn.connect(dL);
+    dL.connect(pL); pL.connect(dWet); pL.connect(dFb); dFb.connect(dR);
+    dR.connect(pR); pR.connect(dWet); pR.connect(dL);
+    dWet.connect(phIn);
+    phIn.connect(phDry); phDry.connect(comp);
+    phIn.connect(aps[0]);
+    for (let i = 1; i < aps.length; i++) aps[i-1].connect(aps[i]);
+    aps[aps.length-1].connect(phWet); phWet.connect(comp);
+    comp.connect(master); master.connect(ctx.destination);
     this.pre = pre; this.post = post; this.shaper = shaper; this.masterGain = master;
+    this.fbFxFilter = fxFilter; this.fbDelayWet = dWet; this.fbDelayFb = dFb;
+    this.fbDelay = dL; this.fbDelay2 = dR;
+    this.fbPhaserWet = phWet; this.fbAps = aps;
+    this.lfoOsc = lfo; this.lfoOscAmt = lfoAmt; this.lfoOscHz = lfoHz;
     this.bassFilter = ctx.createBiquadFilter(); this.bassFilter.type = 'lowpass';
     this.bassFilter.frequency.value = cutoffHz(state.cutoff); this.bassFilter.Q.value = resoQ(state.reso);
-    this.bassFilter.connect(pre);
+    this.pannerFb = ctx.createStereoPanner ? ctx.createStereoPanner() : null;
+    if (this.pannerFb){ this.bassFilter.connect(this.pannerFb); this.pannerFb.connect(pre); }
+    else this.bassFilter.connect(pre);
+    this.lfoOscAmt && this.lfoOscHz && this.bassFilter && this.lfoOscHz.connect(this.bassFilter.frequency);
     if (ctx.resume) ctx.resume();
+  },
+  fxHz(v){ return 120 * Math.pow(2, v * 6.2); },
+  setFx(kind){
+    this.fxKind = kind;
+    const on = k=>kind === k ? 1 : 0;
+    if (this.fxF){
+      this.fxF.frequency.value = kind === 'filter' ? this.fxHz(KNOBS.fxe1.v) : 20000;
+      this.fxF.Q.value = kind === 'filter' ? 0.6 + KNOBS.fxe2.v * 9 : 1;
+    }
+    if (this.delay){
+      this.delay.wet.rampTo(kind === 'delay' ? 0.22 + KNOBS.fxe2.v * 0.6 : 0, 0.05);
+      this.delay.feedback.value = kind === 'delay' ? 0.15 + KNOBS.fxe2.v * 0.7 : 0.35;
+    }
+    if (this.phaser) this.phaser.wet.rampTo(kind === 'phaser' ? 0.3 + KNOBS.fxe2.v * 0.6 : 0, 0.05);
+    if (this.ctx && this.fbFxFilter){
+      const now = this.ctx.currentTime, set = (p, v)=>p.gain.setTargetAtTime(v, now, 0.03);
+      this.fbFxFilter.frequency.setTargetAtTime(kind === 'filter' ? this.fxHz(KNOBS.fxe1.v) : 20000, now, 0.03);
+      this.fbFxFilter.Q.setTargetAtTime(kind === 'filter' ? 0.6 + KNOBS.fxe2.v * 9 : 1, now, 0.03);
+      set(this.fbDelayWet, kind === 'delay' ? 0.22 + KNOBS.fxe2.v * 0.6 : 0);
+      this.fbDelayFb.gain.setTargetAtTime(kind === 'delay' ? 0.15 + KNOBS.fxe2.v * 0.7 : 0.35, now, 0.03);
+      set(this.fbPhaserWet, kind === 'phaser' ? 0.3 + KNOBS.fxe2.v * 0.6 : 0);
+    }
+  },
+  setFxEdit(v1, v2){
+    if (this.fxF && this.fxKind === 'filter'){
+      this.fxF.frequency.value = this.fxHz(v1);
+      this.fxF.Q.value = 0.6 + v2 * 9;
+    }
+    if (this.delay){
+      this.delay.delayTime.value = 0.06 + v1 * 0.5;
+      this.delay.feedback.value = 0.15 + v2 * 0.7;
+    }
+    if (this.phaser){
+      this.phaser.frequency.value = 0.1 + v1 * 9;
+      this.phaser.octaves = 1 + v2 * 4;
+    }
+    if (this.ctx && this.fbFxFilter && this.fxKind === 'filter'){
+      this.fbFxFilter.frequency.setTargetAtTime(this.fxHz(v1), this.ctx.currentTime, 0.03);
+      this.fbFxFilter.Q.setTargetAtTime(0.6 + v2 * 9, this.ctx.currentTime, 0.03);
+    }
+    if (this.ctx && this.fbDelay){
+      this.fbDelay.delayTime.setTargetAtTime(0.06 + v1 * 0.5, this.ctx.currentTime, 0.05);
+      this.fbDelay2.delayTime.setTargetAtTime(0.06 + v1 * 0.5, this.ctx.currentTime, 0.05);
+      this.fbDelayFb.gain.setTargetAtTime(0.15 + v2 * 0.7, this.ctx.currentTime, 0.03);
+    }
+    if (this.ctx && this.lfoOsc) this.lfoOsc.frequency.value = 0.1 + v1 * 9;
+  },
+  setMod(speed, depth){
+    const hz = 0.1 * Math.pow(200, clamp(speed, 0, 1));
+    this.modSpeed = hz; this.modDepth = depth;
+    if (this.lfo){
+      this.lfo.frequency.value = hz;
+      this.lfo.amplitude.value = 1;
+      this.lfoAmt.gain.value = depth * 2600;
+    }
+    if (this.lfoOsc && this.ctx){
+      this.lfoOsc.frequency.setTargetAtTime(hz, this.ctx.currentTime, 0.05);
+      this.lfoOscAmt.gain.value = 1;
+      this.lfoOscHz.gain.value = depth * 2600;
+    }
+  },
+  setOsc(type, detune){
+    if (this.bassS && this.bassS.oscillator) this.bassS.oscillator.type = type;
+    this.oscType = type; this.oscDetune = detune * 100;
+    if (this.bassS && this.bassS.detune) this.bassS.detune.value = detune * 100;
+  },
+  setPan(v){
+    const pan = clamp(v * 2 - 1, -1, 1);
+    if (this.panner) this.panner.pan.rampTo(pan, 0.05);
+    if (this.pannerFb && this.pannerFb.pan) this.pannerFb.pan.setTargetAtTime(pan, this.ctx.currentTime, 0.03);
+    this.pan = pan;
+  },
+  setGlide(v){
+    const g = clamp(v, 0, 1) * 0.5;
+    if (this.bassS) this.bassS.portamento = g;
+    this.glide = g;
   },
   setBpm(v){
     this.bpm = v;
@@ -461,8 +598,14 @@ const AudioEngine = {
     const n = note || 'C2';
     if (this.bassS){ this.bassS.triggerAttackRelease(n, '16n', t, 0.9); return; }
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain();
-    const f = noteFreq(n) * Math.pow(2, this.detuneCents / 1200);
-    o.type = 'sawtooth'; o.frequency.value = f;
+    const f = noteFreq(n) * Math.pow(2, (this.detuneCents + (this.oscDetune || 0)) / 1200);
+    o.type = this.oscType || 'sawtooth';
+    const gl = this.glide || 0;
+    if (gl > 0.005 && this.lastBassF){
+      o.frequency.setValueAtTime(this.lastBassF, t);
+      o.frequency.exponentialRampToValueAtTime(f, t + gl);
+    } else o.frequency.value = f;
+    this.lastBassF = f;
     g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(0.34, t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22 + this.decay * 0.35);
@@ -590,7 +733,22 @@ function parseBin(index){
   if (!state.tempoLock) state.bpm = bpm;
   state.cutoff = dv.getUint8(off + 0x011A) / 127;
   state.reso = dv.getUint8(off + 0x011B) / 127;
+  const rawPitch = dv.getUint8(off + 0x0112);
+  const rawPan = dv.getUint8(off + 0x0115);
+  const rawFx = dv.getUint8(off + 0x0120);
+  const rawMod = dv.getUint8(off + 0x0124);
+  state.fxKind = FX_KINDS[rawFx % 4];
+  state.oscType = oscType(KNOBS.osc1.v);
   state.song = ((state.fileName || 'EMX').replace(/\.(bin|emx)$/i,'').replace(/[_-]+/g,' ').trim().toUpperCase().slice(0,10)) || 'EMX';
+  setKnob('pitch', rawPitch ? clamp((rawPitch - 64) / 63, 0, 1) : 0, true);
+  setKnob('pan', rawPan ? clamp((rawPan - 64) / 63, 0, 1) : 0, true);
+  setKnob('speed', rawMod ? rawMod / 127 : 0.35, true);
+  AudioEngine.setFx(state.fxKind);
+  AudioEngine.setFxEdit(KNOBS.fxe1.v, KNOBS.fxe2.v);
+  AudioEngine.setMod(KNOBS.speed.v, KNOBS.depth.v);
+  AudioEngine.setOsc(state.oscType, KNOBS.osc2.v);
+  AudioEngine.setGlide(KNOBS.pitch.v);
+  AudioEngine.setPan(KNOBS.pan.v);
   if (ORDER.every(t => state.steps[t].every(v => !v))){ demoPattern(index); state.bpm = state.tempoLock ? state.bpm : bpm; }
   return true;
 }
@@ -666,6 +824,33 @@ function setKnob(id, v, silent){
   else if (id === 'cutoff'){ state.cutoff = k.v; AudioEngine.setCutoff(k.v); flashMeta('CUTOFF ' + Math.round(k.v*127)); }
   else if (id === 'reso'){ state.reso = k.v; AudioEngine.setReso(k.v); flashMeta('RES ' + Math.round(k.v*127)); }
   else if (id === 'egtime') AudioEngine.setDecay(k.v);
+  else if (id === 'fxe1' || id === 'fxe2'){
+    AudioEngine.setFxEdit(KNOBS.fxe1.v, KNOBS.fxe2.v);
+    if (state.fxKind !== 'off') AudioEngine.setFx(state.fxKind);
+    flashMeta('FX ' + (id === 'fxe1' ? 'EDIT 1 ' : 'EDIT 2 ') + Math.round(k.v * 100) + '%');
+  }
+  else if (id === 'speed' || id === 'depth'){
+    AudioEngine.setMod(KNOBS.speed.v, KNOBS.depth.v);
+    flashMeta('LFO ' + (0.1 * Math.pow(200, KNOBS.speed.v)).toFixed(1) + ' Hz ' + Math.round(KNOBS.depth.v * 100) + '%');
+  }
+  else if (id === 'osc1'){
+    state.oscType = oscType(k.v);
+    AudioEngine.setOsc(state.oscType, KNOBS.osc2.v);
+    flashMeta('OSC ' + state.oscType.toUpperCase());
+  }
+  else if (id === 'osc2'){
+    AudioEngine.setOsc(state.oscType, k.v);
+    flashMeta('DETUNE ' + Math.round(k.v * 100) + ' cnt');
+  }
+  else if (id === 'pitch'){
+    AudioEngine.setGlide(k.v);
+    flashMeta('GLIDE ' + (k.v * 0.5).toFixed(2) + ' s');
+  }
+  else if (id === 'pan'){
+    AudioEngine.setPan(k.v);
+    const c = Math.round(Math.abs(k.v - 0.5) * 200);
+    flashMeta('PAN ' + (c < 4 ? 'C' : (k.v < 0.5 ? 'L' + c : 'R' + c)));
+  }
 }
 
 function bindKnob(el, id){
@@ -832,12 +1017,10 @@ function hitBtn(id, el){
   else if (id === 'prev') loadPattern((state.pat + PATTERNS - 1) % PATTERNS);
   else if (id === 'next') loadPattern((state.pat + 1) % PATTERNS);
   else if (id === 'filter'){
-    const order = ['lowpass','bandpass','highpass'];
-    state.ftype = order[(order.indexOf(state.ftype) + 1) % 3];
-    if (AudioEngine.filterN) AudioEngine.filterN.type = state.ftype;
-    if (AudioEngine.bassFilter) AudioEngine.bassFilter.type = state.ftype;
-    flashMeta('FILTER ' + state.ftype.toUpperCase());
-    toast('Фильтр: ' + state.ftype.toUpperCase());
+    state.fxKind = FX_KINDS[(FX_KINDS.indexOf(state.fxKind) + 1) % 4];
+    AudioEngine.setFx(state.fxKind);
+    flashMeta('FX ' + state.fxKind.toUpperCase());
+    toast('FX-секция: ' + state.fxKind.toUpperCase());
   }
   el.classList.add('hit');
   setTimeout(()=>el.classList.remove('hit'), 110);
@@ -904,7 +1087,9 @@ function paint(){
   if (btnEls.rec) btnEls.rec.classList.toggle('active', state.rec);
   $('#lcdSong').textContent = state.song;
   $('#lcdPat').textContent = patLabel(state.pat) + (state.muted.has(state.track) ? ' M' : '');
-  $('#lcdTrk').textContent = TRACKS[state.track].name;
+  $('#lcdTrk').textContent = TRACKS[state.track].short;
+  const pm = $('#lcdParam');
+  if (pm) pm.textContent = 'C' + Math.round(KNOBS.cutoff.v * 127) + ' R' + Math.round(KNOBS.reso.v * 127) + ' ' + state.fxKind.slice(0, 3).toUpperCase();
   $('#lcdMode').textContent = state.rec ? 'REC' : (state.playing ? 'PLAY' : (state.isDemoMode ? 'DEMO' : 'STOP'));
 }
 
