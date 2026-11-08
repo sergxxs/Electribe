@@ -94,6 +94,8 @@ body.dragging #lcd{transition:none !important}
 .pad{border-radius:9%/6%}
 .btn{border-radius:10%/16%}
 .pad.sel{background:rgba(255,255,255,.12);opacity:.9}
+/* «горящая» клавиша панели (WRITE/SHIFT/KEYBOARD/TEMPO LOCK/…) — плоская заливка, без blend/тени */
+.pkey.on{background:rgba(255,190,60,.45);opacity:.9;border:1px solid rgba(255,215,120,.75)}
 
 #ribbon{background:transparent;touch-action:none;overflow:visible}
 #ribbon::before{content:"";position:absolute;left:44%;right:44%;top:2%;bottom:2%;border-radius:99px;
@@ -104,39 +106,6 @@ body.dragging #lcd{transition:none !important}
 
   will-change:transform;pointer-events:none}
 
-#tools{position:fixed;left:0;right:0;bottom:0;display:flex;flex-direction:column;align-items:center;gap:4px;
-  padding:5px 10px;background:linear-gradient(180deg,#0a141c,#040a0f);border-top:1px solid rgba(255,255,255,.14);
-  color:#dbe7f2;font-family:"Helvetica Neue",Arial;z-index:20;overflow:hidden}
-#tools .row{display:flex;align-items:center;justify-content:center;gap:9px;width:100%}
-#strip{flex-wrap:wrap;justify-content:center;gap:4px;padding-bottom:1px}
-.tb{flex:none;appearance:none;-webkit-appearance:none;border:1px solid #2c3d4d;border-radius:7px;padding:5px 6px;
-  font:800 9px/1 "Helvetica Neue",Arial;letter-spacing:.02em;color:#cfe3f2;white-space:nowrap;
-  background:linear-gradient(#1b2632,#0d141b);cursor:pointer;-webkit-tap-highlight-color:transparent}
-.tb.on{color:#12190f;background:linear-gradient(#ffd66b,#e0a800);border-color:#7a5c00}
-#tools .up{display:flex;align-items:center;gap:8px;cursor:pointer;padding:9px 14px;border-radius:9px;
-  background:linear-gradient(#1286c9,#0a5f96);border:1px solid #0a4f7d;color:#fff;font:800 11px/1 "Helvetica Neue",Arial;
-  letter-spacing:.04em;white-space:nowrap}
-#tools .up:active{transform:translateY(1px)}
-#tools select{appearance:none;-webkit-appearance:none;color:#ffd24a;border:1px solid #2c3d4d;border-radius:8px;
-  padding:9px 26px 9px 10px;font:700 11px/1 "Courier New",monospace;letter-spacing:.04em;
-  background:linear-gradient(#1c2733,#0d141b);background-image:linear-gradient(#1c2733,#0d141b),linear-gradient(45deg,transparent 50%,#7f93a5 50%),linear-gradient(135deg,#7f93a5 50%,transparent 50%);
-  background-position:0 0,calc(100% - 15px) 50%,calc(100% - 10px) 50%;background-size:100% 100%,5px 5px,5px 5px;background-repeat:no-repeat}
-#tools .hint{font-size:9.5px;color:#8fa7bb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:330px}
-#tools .hint b{color:#cfe3f2}
-#tools .badge{font:700 9px/1 "Courier New",monospace;padding:5px 7px;border-radius:6px;border:1px solid #2c3d4d;color:#7fd7a0;background:rgba(12,30,20,.6)}
-#tools .badge.warn{color:#ffcf5a;border-color:#4a3a12;background:rgba(40,30,8,.6)}
-#tools .badge.live{color:#7dffa8;border-color:#1e6b39;background:rgba(9,34,20,.75);
-  text-shadow:0 0 8px rgba(70,255,130,.5)}
-#drop{position:fixed;inset:0;z-index:60;display:none;place-items:center;background:rgba(3,10,18,.84);
-  color:#eaf4ff;font:700 18px/1.4 "Helvetica Neue",Arial;text-align:center}
-#drop.show{display:grid}
-#drop .dbox{border:2px dashed rgba(255,255,255,.5);border-radius:18px;padding:50px 70px}
-#toast{position:fixed;left:50%;bottom:7px;transform:translate(-50%,40px);opacity:0;visibility:hidden;z-index:80;
-  padding:8px 16px;border-radius:9px;background:rgba(8,16,24,.92);border:1px solid rgba(120,170,255,.28);
-  color:#dce9fb;font:600 11px/1.3 "Helvetica Neue",Arial;transition:transform .25s ease,opacity .18s ease;
-  pointer-events:none;max-width:60vw;text-align:center;}
-#toast.show{transform:translate(-50%,0);opacity:1;visibility:visible}
-@media (max-width:760px){#tools .hint{display:none}}
 #rot{position:fixed;left:50%;top:12px;transform:translateX(-50%);display:none;z-index:70;white-space:nowrap;
   padding:7px 15px;border-radius:999px;background:rgba(8,18,28,.92);border:1px solid rgba(120,170,255,.35);
   color:#d3e3f6;font:600 11px/1 "Helvetica Neue",Arial;letter-spacing:.02em}
@@ -176,15 +145,10 @@ body.debug #ribbon{outline:1px solid #ffaa00 !important;background:rgba(255,170,
   <div class="hx touch-pad" id="ribbon"><i id="ribKnob"></i></div>
 </div></div>
 
-<div id="tools">
-  <div class="row">
-    <label class="up" for="fileInput" title="Дамп карты .BIN/.EMX или ZIP с WAV-сэмплами (Korg Electribe EMX-1.zip из Internet Archive)">📂 .BIN / .EMX / .ZIP</label>
-    <input type="file" id="fileInput" accept=".bin,.emx,.syx,.all,.esx,.zip,application/zip,application/octet-stream" style="display:none">
-    <select id="patternSel" aria-label="Pattern"></select>
-    <div class="hint"><b>9984 B</b> × 128 блоков · <b>BPM</b> +0x00 · <b>KICK</b> +0x40 · <b>CUTOFF</b> +0x11A</div>
-    <div class="badge live" id="fileBadge">LIVE / BUILT-IN A.14</div>
-  </div>
-  <div class="row" id="strip"></div>
+<div id="hiddenIO" aria-hidden="true" style="position:fixed;left:-99999px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none">
+  <input type="file" id="fileInput" accept=".bin,.emx,.syx,.all,.esx,.zip,application/zip,application/octet-stream">
+  <select id="patternSel" aria-label="Pattern"></select>
+  <div id="fileBadge">LIVE / BUILT-IN A.14</div>
 </div>
 
 <div id="rot">↻ Поверните iPad горизонтально — панель шире экрана</div>
@@ -268,6 +232,7 @@ const state = {
   modType:'sine', modDest:'cutoff', modSync:false, waveMode:'dual', ampEg:'env',
   bassNote:0, keyMode:false, menu:null, menuIdx:0, muteMode:false, soloMode:false, shift:false,
   muted:new Set(), solo:null, buf:null, fileName:'', tempoLock:false,
+  patSet:false, ainThru:false, autoBpm:false, accent:{}, patName:'A.14',
   cutoff:0.62, reso:0.25, ftype:'lowpass',
   steps:emptySteps(),
   sampleIdx:{}, sampleSrc:{}, hasZipSamples:false, zipApplied:false
@@ -757,6 +722,65 @@ const AudioEngine = {
     try { if (v.src && v.src.add) v.src.add(SAMPLE_NOTES[tr], buf); } catch(e){}
     v.buf = buf;
     return true;
+  },
+  /* ---------------- AUDIO IN: микрофон/линия для THRU и AUTO BPM SCAN ------- */
+  ensureAudioIn(){
+    if (this.ainReady) return Promise.resolve(true);
+    if (this.ainPending) return this.ainPending;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return Promise.resolve(false);
+    const self = this;
+    this.ainPending = navigator.mediaDevices.getUserMedia(
+      { audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false } })
+      .then(function(stream){
+        const ctx = self.ctx || (self.T && self.T.getContext && (self.T.getContext().rawContext || self.T.getContext().context));
+        if (!ctx || !ctx.createMediaStreamSource) return false;
+        const src = ctx.createMediaStreamSource(stream);
+        const thru = ctx.createGain(); thru.gain.value = 0;
+        const an = ctx.createAnalyser(); an.fftSize = 2048; an.smoothingTimeConstant = 0;
+        src.connect(thru); src.connect(an);
+        thru.connect(ctx.destination);   /* THRU идёт на выход в обход MASTER VOLUME — как в EMX-1 */
+        self.ainStream = stream; self.ainThruGain = thru; self.ainAnalyser = an;
+        self.ainReady = true; self.ainPending = null;
+        return true;
+      }).catch(function(){ self.ainPending = null; return false; });
+    return this.ainPending;
+  },
+  setAinThru(on){
+    this.ainThru = !!on;
+    const g = this.ainThruGain;
+    if (!g) return;
+    try { g.gain.setTargetAtTime(on ? 1 : 0, this.now(), 0.02); }
+    catch(e){ try { g.gain.value = on ? 1 : 0; } catch(_){} }
+  },
+  /* грубый детектор onset'ов по энергии: 6 с на входе → медианный интервал → BPM */
+  scanBpm(ms, done){
+    const self = this;
+    this.ensureAudioIn().then(function(ok){
+      if (!ok || !self.ainAnalyser){ if (done) done(0); return; }
+      const an = self.ainAnalyser, buf = new Uint8Array(an.fftSize);
+      let prev = 0, last = 0, t0 = performance.now();
+      const hits = [];
+      (function tick(){
+        try { an.getByteTimeDomainData(buf); } catch(e){ if (done) done(0); return; }
+        let e = 0;
+        for (let i = 0; i < buf.length; i++){ const d = (buf[i] - 128) / 128; e += d * d; }
+        e = Math.sqrt(e / buf.length);
+        const now = performance.now();
+        if (e > 0.02 && prev > 0.02 && e > prev * 1.6 && now - last > 200){
+          if (last) hits.push(now - last);
+          last = now;
+        } else if (now - last > 1500) last = now;
+        prev = e;
+        if (now - t0 < (ms || 6000)){ requestAnimationFrame(tick); return; }
+        if (hits.length < 3){ if (done) done(0); return; }
+        hits.sort(function(a,b){ return a - b; });
+        const med = hits[hits.length >> 1];
+        let bpm = 60000 / med;
+        while (bpm < 80) bpm *= 2;
+        while (bpm > 190) bpm /= 2;
+        if (done) done(Math.round(bpm * 10) / 10);
+      })();
+    });
   },
   now(){ return this.T ? this.T.now() : (this.ctx ? this.ctx.currentTime : 0); },
 
@@ -1269,12 +1293,13 @@ const AudioEngine = {
   cow(time, vel){ if (this.ready) this.hitVoice('cow', time, vel == null ? 0.85 : vel); },
   shaker(time, vel){ if (this.ready) this.hitVoice('shaker', time, vel == null ? 0.85 : vel); },
   perc(time, vel){ if (this.ready) this.hitVoice('perc', time, vel == null ? 0.85 : vel); },
-  bass(time, note){
+  bass(time, note, vel){
     if (!this.ready) return;
     const t = time != null ? time : this.now();
     const n = note || 'C2';
+    const v = clamp(vel == null ? 0.9 : vel, 0.05, 1);
     if (this.bassS){
-      try { this.bassS.triggerAttackRelease(n, '16n', t, 0.9); } catch(_){}
+      try { this.bassS.triggerAttackRelease(n, '16n', t, v); } catch(_){}
       return;
     }
     const ctx = this.ctx, o = ctx.createOscillator(), g = ctx.createGain();
@@ -1287,19 +1312,20 @@ const AudioEngine = {
     } else o.frequency.value = f;
     this.lastBassF = f;
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.34, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.34 * (v / 0.9), t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.22 + this.decay * 0.35);
     o.connect(g); g.connect(this.bassFilter); o.start(t); o.stop(t + 0.5);
   },
   fire(s, time){
-    const st = state.steps, solo = state.solo;
+    const st = state.steps, solo = state.solo, acc = state.accent;
     const on = t => !state.muted.has(t) && (!solo || solo === t);
     for (let i = 0; i < ORDER.length; i++){
       const t = ORDER[i];
       if (st[t] && st[t][s] && on(t)){
-        if (t === 'hat') this.hitVoice('hat', time, s % 4 === 2 ? 0.95 : 0.7);
-        else if (t === 'bass') this.bass(time, BASS_NOTES[s % 8]);
-        else this.hitVoice(t, time, 0.85);
+        const a = acc[t] ? 1.3 : 1;
+        if (t === 'hat') this.hitVoice('hat', time, (s % 4 === 2 ? 0.95 : 0.7) * a);
+        else if (t === 'bass') this.bass(time, BASS_NOTES[s % 8], 0.9 * a);
+        else this.hitVoice(t, time, 0.85 * a);
       }
     }
   },
@@ -1468,9 +1494,38 @@ const NAV = [
 ];
 // Две кнопки слева под дисплеем (стопка друг над другом) — CURSOR ▲ / ▼
 const CURSOR_KEYS = [['cursor-up',115,702,76,47],['cursor-down',115,777,76,48]];
+/* Остальные клавиши панели. Координаты сняты с фото 2221×1566 и сверены с мануалом EMX-1:
+   Common section  : AUDIO IN THRU / TEMPO LOCK / AUTO BPM SCAN / WRITE·RENAME,
+                     TAP, PART MUTE(REST·TIE), SOLO(TRANSPOSE)
+   Step key section: SHIFT, PATTERN SET, KEYBOARD
+   Part select     : ACCENT (drum), ACCENT (synth) */
+const PANEL_KEYS = [
+  ['tap',764,930,96,102,'TAP TEMPO — тапайте в четвертях'],
+  ['mute',907,930,54,102,'PART MUTE: зажать + клавиша партии · в step-rec — REST/TIE'],
+  ['solo',1004,930,59,102,'SOLO: зажать + клавиша партии'],
+  ['ainthru',615,415,120,45,'AUDIO IN THRU: вход напрямую на выход'],
+  ['tempolock',615,478,120,45,'TEMPO LOCK: темп не меняется при смене паттерна'],
+  ['autobpm',615,540,120,45,'AUTO BPM SCAN: снять темп со входа'],
+  ['write',615,615,120,45,'WRITE · SHIFT+WRITE = RENAME · долгое нажатие = загрузить файл'],
+  ['shift',521,1276,78,63,'SHIFT'],
+  ['patset',637,1276,105,53,'PATTERN SET: зажать + step key = паттерн'],
+  ['keyboard',777,1275,107,57,'KEYBOARD: 16 клавиш = ноты'],
+  ['accentD',1415,1174,79,50,'ACCENT drum part'],
+  ['accentS',2008,1174,81,50,'ACCENT synth part'],
+  /* ---- секция EDIT: PART COMMON / MODULATION (прямоугольники клавиш с фото) ---- */
+  ['ampeg',1457,538,114,44,'AMP EG: огибающая партии — decay / gate'],
+  ['roll',1587,538,114,44,'ROLL: зажать — ретриггер 1/16 · SHIFT+ROLL — 1/32'],
+  ['modtype',1859,538,114,44,'MOD TYPE: форма LFO (sine/tri/sqr/saw/random)'],
+  ['fxselect',1457,598,114,44,'FX SELECT: на какую шину FX1/FX2/FX3 идёт текущая партия'],
+  ['fxsend',1587,598,114,44,'FX SEND: посыл текущей партии на эффект (вкл/выкл)'],
+  ['editsel',1298,926,114,42,'EDIT SELECT: какой процессор правят ручки FX EDIT 1/2'],
+  ['moddest',1859,598,114,44,'MOD DEST: цель модуляции — pitch/cutoff/amp/pan'],
+  ['sync',1990,598,114,44,'BPM SYNC: LFO в такте с темпом'],
+  ['waveform',1114,868,119,40,'OSC TYPE: модель синтеза MMT — dual/chord/ring/shape']
+];
 
 const deck = $('#deck'), stage = $('#stage');
-const keyEls = [], padEls = [], btnEls = {}, navEls = {}, lcdCells = [];
+const keyEls = [], padEls = [], btnEls = {}, navEls = {}, panelEls = {}, lcdCells = [];
 const pct = (v, base)=> (v / base * 100) + '%';
 const place = (el,x,y,w,h)=>{
   el.style.left = pct(x,IMG_W); el.style.top = pct(y,IMG_H);
@@ -1480,8 +1535,7 @@ const rot = v => (-140 + clamp(v,0,1) * 280).toFixed(1) + 'deg';
 const forceUpdate = ()=>{ void deck.offsetWidth; };
 
 function layout(){
-  const th = $('#tools').offsetHeight || 52;
-  stage.style.bottom = th + 'px';
+  stage.style.bottom = '0px';
   const r = stage.getBoundingClientRect();
   if (ribbonSet) ribbonSet(state.arp, true);
   const s = Math.min(r.width / IMG_W, r.height / IMG_H);
@@ -1694,6 +1748,50 @@ function build(){
     el.addEventListener('pointerdown', e=>{ e.preventDefault(); press(el); doFn(fn); });
     $('#btns').appendChild(el);
   });
+
+  PANEL_KEYS.forEach(function(k){
+    const id = k[0], el = document.createElement('button');
+    el.type = 'button'; el.className = 'touch-pad btn pkey'; el.dataset.pkey = id;
+    el.title = k[5] || id;
+    place(el, k[1], k[2], k[3], k[4]);
+    if (id === 'write'){
+      /* WRITE — короткое нажатие, RENAME — с SHIFT, долгое (>600 мс) — диалог выбора файла */
+      let timer = 0, long = false;
+      const end = ()=>{ clearTimeout(timer); if (long){ long = false; return; } doFn('write'); };
+      el.addEventListener('pointerdown', e=>{
+        e.preventDefault(); press(el); long = false;
+        timer = setTimeout(()=>{ long = true; const f = $('#fileInput'); if (f) f.click(); }, 600);
+      });
+      el.addEventListener('pointerup', end);
+      el.addEventListener('pointerleave', end);
+      el.addEventListener('pointercancel', ()=>{ clearTimeout(timer); long = false; });
+    }
+    else if (id === 'roll'){
+      /* ROLL работает по удержанию: нажали — ретриггер, отпустили — стоп.
+         SHIFT+ROLL переключает делитель 1/16 <-> 1/32. */
+      const stop = ()=>{ if (AudioEngine.rolling) AudioEngine.setRoll(false, state.rollDiv); };
+      el.addEventListener('pointerdown', e=>{
+        e.preventDefault(); press(el);
+        if (state.shift){
+          state.rollDiv = state.rollDiv === '32n' ? '16n' : '32n';
+          flashMeta('ROLL 1/' + (state.rollDiv === '32n' ? '32' : '16'));
+          toast('ROLL: делитель 1/' + (state.rollDiv === '32n' ? '32' : '16'));
+          paint();
+          return;
+        }
+        AudioEngine.setRoll(true, state.rollDiv);
+        flashMeta('ROLL 1/' + (state.rollDiv === '32n' ? '32' : '16'));
+      });
+      el.addEventListener('pointerup', stop);
+      el.addEventListener('pointerleave', stop);
+      el.addEventListener('pointercancel', stop);
+    }
+    else {
+      el.addEventListener('pointerdown', e=>{ e.preventDefault(); press(el); doFn(id); });
+    }
+    $('#btns').appendChild(el);
+    panelEls[id] = el;
+  });
 }
 
 function menuRow(m, i){
@@ -1713,24 +1811,37 @@ function press(el){
   setTimeout(()=>el.classList.remove('active'), 130);
 }
 
-function syncStrip(){
-  const host = $('#strip');
-  if (!host) return;
-  const tbs = host.children;
-  for (let i = 0; i < tbs.length; i++){
-    const b = tbs[i], fn = b.dataset.fn;
-    let on = false;
-    if (fn.indexOf('menu:') === 0) on = state.menu === fn.slice(5);
-    else if (fn === 'sync') on = state.modSync;
-    else if (fn === 'mute') on = state.muteMode;
-    else if (fn === 'solo') on = state.soloMode;
-    else if (fn === 'shift') on = state.shift;
-    else if (fn === 'keyboard') on = state.keyMode;
-    if (b.classList.contains('on') !== on) b.classList.toggle('on', on);
-  }
+function syncPanel(){
+  const lit = (id, on)=>{
+    const el = panelEls[id];
+    if (el && el.classList.contains('on') !== !!on) el.classList.toggle('on', !!on);
+  };
+  lit('shift', state.shift);
+  lit('mute', state.muteMode);
+  lit('solo', state.soloMode || !!state.solo);
+  lit('keyboard', state.keyMode);
+  lit('patset', state.patSet);
+  lit('tempolock', state.tempoLock);
+  lit('ainthru', state.ainThru);
+  lit('autobpm', state.autoBpm);
+  const v = AudioEngine.voices[state.track];
+  lit('fxsend', v ? v.sendLevel > 0.02 : false);
+  lit('fxselect', v ? v.sendTo !== 'fx1' : false);
+  lit('sync', state.modSync);
+  lit('ampeg', state.ampEg === 'env');
+  lit('roll', !!AudioEngine.rolling);
+  lit('accentD', ORDER.indexOf(state.track) < DRUMS.length ? !!state.accent[state.track] : false);
+  lit('accentS', ORDER.indexOf(state.track) >= DRUMS.length ? !!state.accent[state.track] : false);
+}
+
+function setBadge(text){
+  state.badge = text;
+  const el = $('#fileBadge'); if (el) el.textContent = text;
+  flashMeta(text);
 }
 
 function toggleStep(i){
+  if (state.patSet){ loadPattern(i % PATTERNS); flashMeta('PATTERN ' + patLabel(state.pat)); return; }
   const t = state.track;
   state.steps[t][i] = !state.steps[t][i];
   if (state.steps[t][i]) preview(t, i);
@@ -1798,8 +1909,10 @@ function togglePlay(){
 
 function loadPattern(i){
   state.pat = clamp(i | 0, 0, PATTERNS - 1);
+  const keep = state.tempoLock ? state.bpm : 0;
   const parsed = state.buf ? parseBin(state.pat) : false;
   if (!parsed) demoPattern(state.pat);
+  if (state.tempoLock && keep){ state.bpm = keep; }
   const sel = $('#patternSel'); if (sel) sel.value = String(state.pat);
   setKnob('cutoff', state.cutoff, true);
   setKnob('reso', state.reso, true);
@@ -1856,8 +1969,13 @@ function paint(){
     const on = state.menu === m;
     if (navEls[m].classList.contains('active') !== on) navEls[m].classList.toggle('active', on);
   }
-  syncStrip();
-  setText($('#lcdParam'), 'C' + Math.round(KNOBS.cutoff.v * 127) + ' R' + Math.round(KNOBS.reso.v * 127) + ' ' + state.fxBus.toUpperCase());
+  syncPanel();
+  {
+    const _v = AudioEngine.voices[state.track];
+    const _bus = (_v && _v.sendTo) || state.fxBus || 'fx1';
+    setText($('#lcdParam'), 'C' + Math.round(KNOBS.cutoff.v * 127) + ' R' + Math.round(KNOBS.reso.v * 127)
+      + ' ' + _bus.toUpperCase() + ' S' + Math.round(((_v && _v.sendLevel) || 0) * 100));
+  }
   setText($('#lcdSong'), menuItems ? state.menu : state.song);
   setText($('#lcdMode'), state.rec ? 'REC' : (state.playing ? 'PLAY'
     : state.keyMode ? 'KEYS' : (menuItems ? (state.menuIdx + 1) + '/' + menuItems.length : (state.isDemoMode ? 'DEMO' : 'STOP'))));
@@ -1916,12 +2034,7 @@ function loadBuiltin(){
   state.steps = emptySteps();
   ORDER.forEach(t=>{ if (p.steps[t]) state.steps[t] = p.steps[t].map(Boolean); });
   state.isDemoMode = false;
-  const badge = $('#fileBadge');
-  if (badge){
-    badge.textContent = 'LIVE / BUILT-IN A.14';
-    badge.classList.remove('warn');
-    badge.classList.add('live');
-  }
+  setBadge('LIVE / BUILT-IN A.14');
   const sel = $('#patternSel'); if (sel) sel.value = String(state.pat);
   setKnob('cutoff', state.cutoff, true);
   setKnob('reso', state.reso, true);
@@ -1947,12 +2060,7 @@ function applyFirmware(buf, quiet){
   if (!buf || !buf.byteLength) return false;
   state.buf = buf;
   state.isDemoMode = false;
-  const badge = $('#fileBadge');
-  if (badge){
-    badge.textContent = 'LIVE / ORIGINAL DATA';
-    badge.classList.remove('warn');
-    badge.classList.add('live');
-  }
+  setBadge('LIVE / ORIGINAL DATA');
   loadPattern(DEFAULT_PAT);
   if (!quiet) toast('Прошивка восстановлена из памяти браузера · ' + patLabel(DEFAULT_PAT));
   return true;
@@ -1995,8 +2103,7 @@ function readFile(file){
       toast('Читаю архив ' + (u8.length / 1048576).toFixed(2) + ' МБ…');
       setTimeout(()=>{
         applySampleZip(u8, file.name, false).then(r=>{
-          const badge = $('#fileBadge');
-          if (badge){ badge.textContent = 'SAMPLES / ' + r.tracks + ' PARTS'; badge.classList.remove('warn'); badge.classList.add('live'); }
+          setBadge('SAMPLES / ' + r.tracks + ' PARTS');
         }).catch(e=>toast('ZIP: ' + e.message));
       }, 30);
     };
@@ -2008,55 +2115,13 @@ function readFile(file){
     state.buf = fr.result;
     state.isDemoMode = false;
     setTimeout(()=>saveFirmware(state.buf), 0);
-    const badge = $('#fileBadge');
-    badge.textContent = 'LIVE / ORIGINAL DATA';
-    badge.classList.remove('warn');
-    badge.classList.add('live');
+    setBadge('LIVE / ORIGINAL DATA');
     toast(file.size === DUMP
       ? 'Дамп карты 1 831 424 байт · 128 паттернов по 9984 Б'
       : 'Загружено ' + (file.size/1048576).toFixed(2) + ' МБ — ожидался дамп 1.74 МБ');
     loadPattern(state.pat);
   };
   fr.readAsArrayBuffer(file);
-}
-
-const STRIP = [
-  ['cursor-up','▲','Курсор вверх'],['cursor-down','▼','Курсор вниз'],
-  ['menu:PATTERN','PATTERN','Экран PATTERN'],['menu:PART EDIT','PART EDIT','Экран PART EDIT'],
-  ['menu:STEP EDIT','STEP EDIT','Экран STEP EDIT'],['menu:SONG','SONG','Экран SONG'],
-  ['menu:GLOBAL','GLOBAL','Экран GLOBAL'],['menu:MIDI','MIDI','Экран MIDI'],
-  ['editsel','EDIT','EDIT SELECT: FX1 / FX2 / FX3'],['waveform','WAVE','MMT: dual / chord / ring / shape'],
-  ['modtype','TYPE','LFO: sine / tri / sqr / saw / random'],['moddest','DEST','DEST: pitch / cutoff / amp / pan'],
-  ['sync','SYNC','BPM SYNC вкл/выкл'],['filtertype','FLT','LPF / HPF / BPF / BPF+'],
-  ['ampeg','EG','AMP EG: gate / env'],['roll','ROLL','ROLL 1/16 (держи) — с SHIFT 1/32'],
-  ['tap','TAP','TAP TEMPO'],['mute','MUTE','PART MUTE (зажать + дорожка)'],
-  ['solo','SOLO','SOLO (зажать + дорожка)'],['shift','SHIFT','SHIFT (модификатор)'],
-  ['keyboard','KEYS','SHIFT + PATTERN SET + KEYBOARD: 16 клавиш']
-];
-
-function buildStrip(){
-  const host = $('#strip');
-  STRIP.forEach(([fn, label, title])=>{
-    const b = document.createElement('button');
-    b.type = 'button'; b.className = 'tb'; b.dataset.fn = fn; b.textContent = label;
-    b.title = title || label;
-    if (fn === 'roll'){
-      b.addEventListener('pointerdown', e=>{
-        e.preventDefault();
-        if (!AudioEngine.ready) unlock();
-        if (state.shift) state.rollDiv = state.rollDiv === '16n' ? '32n' : '16n';
-        AudioEngine.setRoll(true, state.rollDiv);
-        flashMeta('ROLL 1/' + (state.rollDiv === '32n' ? '32' : '16'));
-      });
-      const off = ()=>AudioEngine.setRoll(false);
-      b.addEventListener('pointerup', off);
-      b.addEventListener('pointerleave', off);
-      b.addEventListener('pointercancel', off);
-    } else {
-      b.addEventListener('pointerdown', e=>{ e.preventDefault(); doFn(fn); });
-    }
-    host.appendChild(b);
-  });
 }
 
 function moveCursor(d){
@@ -2154,7 +2219,98 @@ function doFn(fn){
     AudioEngine.setAmpEg(state.ampEg);
     flashMeta('AMP EG ' + state.ampEg.toUpperCase());
   }
+  else if (fn === 'fxselect'){
+    /* FX SELECT: посыл ЭТОЙ партии (барабан или синтезатор) на FX1 / FX2 / FX3 */
+    const order = ['fx1','fx2','fx3'];
+    const v = AudioEngine.voices[state.track];
+    const cur = (v && v.sendTo) || state.fxBus || 'fx1';
+    const next = order[(order.indexOf(cur) + 1) % 3];
+    AudioEngine.setFx(state.track, next);
+    state.fxBus = next;
+    if (next !== 'fx1') state.editTarget = next;
+    if (v) setKnob('fx', v.sendLevel, true);
+    flashMeta('FX ' + TRACKS[state.track].short + ' > ' + next.toUpperCase());
+    toast(TRACKS[state.track].short + ' -> ' + next.toUpperCase() + (v && v.sendLevel < 0.02 ? ' (посыл 0 — включите FX SEND)' : ''));
+  }
+  else if (fn === 'fxsend'){
+    /* FX SEND: посыл этой партии на выбранную шину — вкл/выкл, точный уровень ручкой FX */
+    const v = AudioEngine.voices[state.track];
+    const on = !(v && v.sendLevel > 0.02);
+    AudioEngine.setSend(state.track, on ? 0.45 : 0);
+    setKnob('fx', on ? 0.45 : 0, true);
+    flashMeta('FX SEND ' + TRACKS[state.track].short + ' ' + (on ? 'ON' : 'OFF'));
+    toast('FX SEND ' + TRACKS[state.track].short + ': ' + (on ? '45% на ' + ((v && v.sendTo) || state.fxBus).toUpperCase() : 'выключен'));
+  }
+  else if (fn === 'roll'){
+    /* страховка для тапа без удержания: короткое нажатие включает/выключает ролл */
+    if (state.shift){
+      state.rollDiv = state.rollDiv === '32n' ? '16n' : '32n';
+      flashMeta('ROLL 1/' + (state.rollDiv === '32n' ? '32' : '16'));
+    } else {
+      AudioEngine.setRoll(!AudioEngine.rolling, state.rollDiv);
+      flashMeta(AudioEngine.rolling ? 'ROLL 1/' + (state.rollDiv === '32n' ? '32' : '16') : 'ROLL OFF');
+    }
+  }
   else if (fn === 'tap') tapTempo();
+  else if (fn === 'patset'){
+    state.patSet = !state.patSet;
+    flashMeta('PATTERN SET ' + (state.patSet ? 'ON' : 'OFF'));
+    toast(state.patSet ? 'PATTERN SET: зажмите и жмите step 1…16' : 'PATTERN SET выключен');
+  }
+  else if (fn === 'tempolock'){
+    state.tempoLock = !state.tempoLock;
+    flashMeta('TEMPO LOCK ' + (state.tempoLock ? 'ON' : 'OFF'));
+  }
+  else if (fn === 'ainthru'){
+    state.ainThru = !state.ainThru;
+    if (!state.ainThru){ AudioEngine.setAinThru(false); flashMeta('AUDIO IN THRU OFF'); }
+    else {
+      flashMeta('AUDIO IN THRU ON');
+      AudioEngine.ensureAudioIn().then(ok=>{
+        AudioEngine.setAinThru(true);
+        if (!ok) toast('Вход недоступен: THRU включён, но сигнал не идёт');
+      });
+    }
+  }
+  else if (fn === 'autobpm'){
+    state.autoBpm = !state.autoBpm;
+    if (state.autoBpm){
+      flashMeta('AUTO BPM SCAN… 6 s');
+      toast('Сканирую вход — играйте ритм');
+      AudioEngine.scanBpm(6000, function(bpm){
+        state.autoBpm = false;
+        if (bpm){ applyBpm(clamp(bpm, 40, 240)); flashMeta('BPM ' + state.bpm.toFixed(1)); toast('AUTO BPM: ' + state.bpm.toFixed(1)); }
+        else { flashMeta('AUTO BPM: нет сигнала'); toast('AUTO BPM: ритм не найден'); }
+        paint();
+      });
+    } else flashMeta('AUTO BPM OFF');
+  }
+  else if (fn === 'write'){
+    if (state.shift){
+      const nm = window.prompt('Имя паттерна (' + patLabel(state.pat) + ')', state.patName || '');
+      if (nm !== null){ state.patName = (nm || 'A.14').toUpperCase().slice(0, 8); flashMeta('NAME ' + state.patName); }
+    } else {
+      try {
+        if (state.buf) saveFirmware(state.buf);
+        localStorage.setItem('emx_pat_' + state.pat, JSON.stringify({
+          bpm:state.bpm, cutoff:state.cutoff, reso:state.reso, steps:state.steps,
+          name:state.patName, muted:Array.from(state.muted), accent:state.accent }));
+        flashMeta('WRITE ' + patLabel(state.pat));
+        toast('Паттерн ' + patLabel(state.pat) + ' записан в память браузера');
+      } catch(e){ flashMeta('WRITE FAIL'); toast('WRITE: ' + e.message); }
+    }
+  }
+  else if (fn === 'accentD' || fn === 'accentS'){
+    const wantDrum = fn === 'accentD';
+    const isDrum = DRUMS.indexOf(state.track) >= 0;
+    if (wantDrum !== isDrum){
+      state.track = wantDrum ? DRUMS[0] : 'bass';
+      selectTrack(state.track);
+    }
+    state.accent[state.track] = !state.accent[state.track];
+    flashMeta('ACCENT ' + TRACKS[state.track].short + ' ' + (state.accent[state.track] ? 'ON' : 'OFF'));
+    toast('ACCENT ' + TRACKS[state.track].short + ': ' + (state.accent[state.track] ? 'подчёркивать долю' : 'выключен'));
+  }
   else if (fn === 'mute'){
     state.muteMode = !state.muteMode; state.soloMode = false;
     if (state.solo){ state.solo = null; AudioEngine.setSolo(null, false); }
@@ -2247,7 +2403,6 @@ function boot(){
     setTimeout(()=>toast('Слой кнопок включён (?sprite) — совмещение спрайта с панелью 0.47, see README'), 400);
   }
   build();
-  buildStrip();
   buildSprites();
   buildSelect();
   bindInputs();
@@ -2261,7 +2416,8 @@ function boot(){
   restoreFirmware();
   paint();
   window.EMX = {AudioEngine, state, KNOBS, setKnob, loadPattern, paint, hitPad, saveFirmware, restoreFirmware,
-    SAMPLE_ZIP, sampleCount, sampleName, classifyWav, zipIndex, applySampleZip, menuRow, doFn, cycleSample};
+    SAMPLE_ZIP, sampleCount, sampleName, classifyWav, zipIndex, applySampleZip, menuRow, doFn, cycleSample,
+    selectTrack, hitBtn};
   document.addEventListener('pointerdown', function once(){
     document.removeEventListener('pointerdown', once);
     unlock();
