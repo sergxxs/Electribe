@@ -62,6 +62,7 @@
 | Элемент | Действие |
 |---|---|
 | **MASTER VOLUME** | общая громкость |
+| **AUDIO IN THRU / LEVEL** | входящая громкость (трим мастер-шины) |
 | **TUBE GAIN / DRIVE** | степень Tube Saturation (драйв) |
 | **CUTOFF / RESONANCE** (SYNTH FILTER) | срез и добротность фильтра басовой партии |
 | **EG TIME** | спад огибающей баса |
@@ -76,22 +77,65 @@
 
 На десктопе: `Space` — play/stop, `←/→` — паттерны, `1–4` — дорожки, `Esc` — стоп.
 
+## Навигация (левая секция) и экран
+
+Шесть клавиш режима — **настоящие сенсорные зоны на фотографии панели** (координаты
+измерены по исходнику 2221×1566, см. `const NAV`):
+
+| Клавиша | x, y, w, h (пиксели панели) | Меню на LCD |
+|---|---|---|
+| PATTERN | 221, 846, 112×41 | PATTERN SELECT / LENGTH / GROOVE / SCALE / ROLL / LAST STEP |
+| PART EDIT | 352, 846, 113×41 | OSC EDIT / FILTER EDIT / EG EDIT / MOD SETTING / PART LEVEL / PART PAN |
+| STEP EDIT | 483, 846, 112×41 | STEP 01/16 / VELOCITY / GATE TIME / MOTION / SHIFT TIMING / TRIG HOLD |
+| SONG | 613, 846, 113×41 | SONG 01 NAME / STEP 001 / REPEAT / TRACK / PATTERN / END STEP |
+| GLOBAL | 744, 846, 112×41 | **AUDIO OUT** / LCD CONTRAST / KNOB MODE / POWER SAVE / MIDI CLOCK / INIT |
+| MIDI | 874, 846, 113×41 | **MIDI CH: 1** / CLOCK / NOTE RX / CONTROL CH / SYSEX / LOCAL |
+
+Повторное нажатие закрывает меню, активная клавиша подсвечивается. Внизу экрана есть
+дублирующая панель инструментов (все функции, которых на фото нет отдельными зонами, —
+`CURSOR ▲/▼`, `EDIT SELECT`, `WAVEFORM`, `MOD TYPE`, `DEST`, `BPM SYNC`, `FILTER TYPE`,
+`AMP EG`, `ROLL`, `TAP`, `MUTE`, `SOLO`, `SHIFT`, `KEYS`):
+
+* **CURSOR ▲/▼** — перемещение строки внутри меню (`state.menuIdx`), на LCD — `n/N`.
+* **TAP TEMPO** — BPM по реальным тапам: усреднение интервалов последних 5 касаний
+  (сброс, если пауза > 2.5 с), 4 тапа по 250 мс → 240 BPM.
+* **PART MUTE / SOLO** — режим залипает, дальше пад дорожки глушит канал
+  (`voice.ch.mute`) или оставляет его солировать (`setSolo`); повторное нажатие SOLO снимает всё.
+* **SHIFT + KEYS** — режим клавиатуры: 16 шаговых кнопок играют `C2 … D#3` на басу,
+  шаги при этом не переключаются.
+* **AUDIO IN THRU / LEVEL** — самая левая верхняя ручка: входной трим мастер-шины.
+
+Светодиоды микшера (синие 1–8) вспыхивают на 80 мс ровно в момент удара сэмпла
+(`flashTrack` из колбэка секвенсора), красные FX-индикаторы — для KICK/SNARE/HAT.
+Лампы Valve Force при `STOP` имеют `opacity: 0` и плавно разгораются при `PLAY`.
+
 ## Аудио
 
 * `Tone.js 14.8.49` с cdnjs; контекст создаётся по первому касанию (`latencyHint: 'interactive'`,
   `lookAhead: 0.02`), чтобы не блокировать запуск и не ломать autoplay-политику Safari.
-* **Статическая шина эффектов** создаётся один раз при старте и никогда не перестраивается:
+* **Независимая цепочка на каждый канал.** Все 9 ударных и бас собираются один раз, при старте:
 
   ```
-  Sampler (9 дорог) ─┐
-                     ├─→ Volume ─→ Distortion (Tube Gain) ─→ Filter (FX1) ─→ PingPongDelay (FX2) ─→ Phaser (FX3) ─→ Limiter ─→ Out
-  MonoSynth (бас) ─→ Filter ─→ Panner ─┘
-                                        ↑ LFO (MODULATION) подключён к частоте фильтра баса
+  Дорожка tr:  Sampler ─→ Tone.Channel(tr) ─┐
+                          (pan / volume)    ├─→ masterBus ─→ Distortion(Tube) ─→ Limiter ─→ Out
+                          └─→ Gain(send) ─→ fxIn[bus] ─→ FX1|FX2|FX3 ─→ fxReturn ─┘
+
+  FX1 = Tone.Filter (LPF/HPF/BPF/BPF+)      — ручки FX EDIT 1/2: frequency, Q
+  FX2 = Tone.PingPongDelay                  — ручки FX EDIT 1/2: delayTime, feedback
+  FX3 = Tone.Phaser                         — ручки FX EDIT 1/2: frequency, octaves
+
+  Бас: MonoSynth ─→ bassFilter ─→ Tone.Channel(bass) ─→ lfoTrema(tremolo) ─→ masterBus
+       LFO (MODULATION) ─→ lfoAmt.{pitch,cutoff,amp,pan} ─→ цель, выбранная DEST
   ```
 
-  Эффекты не создаются и не удаляются на ходу: включение/выключение — это `wet.value = 0`
-  или `1` (`Tone.Filter` «в обходе» выставляется в `frequency = 20000 Hz`, `Q = 1`).
-  Переключение секции FX — кнопкой FILTER TYPE или байтом `+0x0120` (`OFF → FILTER → DELAY → PHASER`).
+  * `EDIT SELECT` переключает `editTarget` (fx1 / fx2 / fx3) — ручки FX EDIT 1/2 правят
+    именно выбранный процессор, остальные не трогаются.
+  * `FX SELECT` в PART COMMON (и кнопка FILTER на панели, и байт `+0x0120`) направляет
+    **текущую** дорожку на FX1 / FX2 / FX3: `voice.send.disconnect() → connect(fxIn[bus])`.
+  * `FX SEND` — уровень посыла дорожки (`voice.send.gain`).
+  * `ROLL` (зажатие) — `setInterval` по 1/16 или 1/32 (SHIFT+ROLL переключает делитель),
+    ретриггерит текущий инструмент, пока палец на кнопке.
+  * Ни один узел не создаётся и не удаляется на ходу: только переключение `connect()`.
 * Ударные больше **не синтезируются**: ни одного `MembraneSynth`/`NoiseSynth`/`MetalSynth`.
   Один `Tone.Sampler`, в который кладутся `AudioBuffer`. Сэмплы берутся из двух источников:
 
@@ -115,6 +159,13 @@
      ⚠️ У репозитория-источника нет лицензии — ссылки используются как внешние URL,
      сами файлы в `index.html` **не** встраиваются; при необходимости замените
      `SAMPLE_URLS` на свой хостинг.
+  3. **Internet Archive, коллекция `drum-machines-collection`** — там лежит
+     `Korg Electribe EMX-1.zip` (13 090 393 байт, 207 wav-сэмплов), но **только архивом**:
+     коллекция раздаёт один ZIP на аппарат, отдельных `.wav` по прямым ссылкам в ней нет,
+     поэтому «в лоб» прописать URL вида
+     `archive.org/download/drum-machines-collection/Korg%20Electribe%20EMX-1/BD.wav`
+     невозможно — такой файл не существует. Прямые ссылки появятся, только если
+     распаковать архив на своём хостинге и прописать его в `SAMPLE_URLS`.
 
   | Нота | Дорожка | Сэмпл |
   |---|---|---|
@@ -147,10 +198,15 @@
 | **FX EDIT 2** | `Filter.Q` (FX1) / `Phaser.octaves` / `PingPongDelay.feedback` и `wet` | 0.6…9.6 / 1…5 / 0.15…0.85 |
 | **OSC EDIT 1** | `bassS.oscillator.type` | sawtooth → square → triangle |
 | **OSC EDIT 2** | `bassS.detune` | 0…100 центов |
-| **MOD SPEED** | `lfo.frequency` | 0.1…20 Гц (экспоненциально) |
-| **MOD DEPTH** | `lfoAmt.gain` → `filterN.frequency` | ±0…2600 Гц |
-| **PITCH / GLIDE** | `bassS.portamento` | 0…0.5 с |
-| **PAN** | `panner.pan` (PART COMMON) | −1…+1 |
+| **MOD SPEED** | `lfo.frequency` | 0.1…30 Гц (экспоненциально), при BPM SYNC — `(bpm/60)·(0.25…4)` Гц |
+| **MOD DEPTH** | `lfoAmt[d].gain` | cutoff ±2600 Гц / pitch ±600 центов / amp ×0…2 / pan ±1 (DEST: PITCH, CUTOFF, AMP, PAN) |
+| **MOD TYPE** | `lfo.type` | sine / sawtooth / triangle / square / random (random — `Tone.Loop('8n')` со случайным значением) |
+| **WAVEFORM (MMT)** | алгоритм баса | dual (saw +7 центов) → chord (square −12) → ring (triangle +1200) → waveshape (saw + own detune) |
+| **EG INT** | `bassS.filterEnvelope.octaves` / `sustain` | 0…5 октав |
+| **PITCH** | `bassS.portamento` | 0…0.25 с |
+| **PAN** | `voice.ch.pan` выбранной дорожки (PART COMMON) | −1…+1 |
+| **LEVEL** | `voice.ch.volume` выбранной дорожки (PART COMMON) | −40…0 дБ |
+| **AUDIO IN LEVEL** | входной трим мастер-шины (×0.5…×1.5) | 0…1 |
 | **CUTOFF / RESONANCE** | `filterN.frequency` / `filterN.Q` | 55 Гц…10 кГц / 0.4…24 |
 | **ARPEGGIATOR (слайдер)** | `bassS.detune` ±700 центов + высота арпеджио | 0…1 |
 
@@ -282,8 +338,10 @@ Base64-лист, — а `background-size` и `background-position` считае�
   без перерисовки), ползунок — `transform: translateY()` + `will-change: transform`.
 * Текст LCD пишется только при реальном изменении (`setText()` кеширует последнее значение),
   поэтому шаг секвенсора не дёргает layout лишний раз.
-* Замер в Chromium (без GPU): 60.4 FPS при включённых всех 16 шагах на всех дорожках,
-  активном дилее и работающем LFO; худший кадр 26 мс, длинных кадров — 3 за 3 с.
+* Замер в Chromium (без GPU), **10 независимых каналов + 3 шины FX + LFO + ROLL**:
+  60.3–60.5 FPS при включённых всех 16 шагах на всех дорожках, активном дилее (FX2),
+  работающем LFO и зажатом ROLL; худший кадр 25.5 мс, длинных кадров 2–5 за 3 с.
+  Ошибок в консоли — ноль, как на Tone.js, так и на резервном WebAudio-движке.
 * Никаких `mix-blend-mode` и `box-shadow` в горячем состоянии: `.active` — это плоская
   полупрозрачная заливка + `opacity:.85` + `transform:translateZ(0)`, то есть чистая
   композиция на GPU. А во время перетаскивания ручки или ползунка на `<body>` ставится
